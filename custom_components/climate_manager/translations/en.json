@@ -1,0 +1,182 @@
+{
+  "title": "Climate Manager",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Install Climate Manager",
+        "description": "This integration installs without any configuration. You'll then be able to add zones and configure presence from \"Configure\"."
+      }
+    },
+    "abort": {
+      "already_configured": "Integration already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Climate Manager",
+        "description": "Pick an action. Thresholds, schedule and presence are managed **per profile** in the Lovelace card, not here.",
+        "menu_options": {
+          "add_zone": "Add a zone",
+          "edit_zone": "Edit a zone",
+          "remove_zone": "Remove a zone",
+          "presence": "Global presence (optional)"
+        }
+      },
+      "presence": {
+        "title": "Global presence",
+        "description": "Optional — only drives the \"House absent/present\" pill in the card. Per-profile presence gates are configured in the card.",
+        "data": {
+          "presence_entity": "Presence entity",
+          "presence_absent_states": "States considered as absent"
+        }
+      },
+      "add_zone": {
+        "title": "Add a zone",
+        "description": "Zone identity + timings. Thresholds, schedule and presence are managed per profile in the card.",
+        "data": {
+          "name": "Zone name",
+          "climate_entity": "AC entity",
+          "temperature_sensors": "Temperature sensors (averaged)",
+          "window_sensors": "Window sensors (optional)",
+          "duree_stabilisation_min": "Stabilization duration",
+          "duree_cooldown_min": "Cooldown duration",
+          "override_duree_min": "Manual override duration"
+        }
+      },
+      "edit_zone": {
+        "title": "Pick the zone to edit",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "edit_zone_form": {
+        "title": "Edit zone",
+        "description": "Profiles (thresholds, schedule, presence, power, fan) are edited in the Lovelace card § Profils.",
+        "data": {
+          "name": "Zone name",
+          "climate_entity": "AC entity",
+          "temperature_sensors": "Temperature sensors (averaged)",
+          "window_sensors": "Window sensors (optional)",
+          "duree_stabilisation_min": "Stabilization duration",
+          "duree_cooldown_min": "Cooldown duration",
+          "override_duree_min": "Manual override duration"
+        }
+      },
+      "remove_zone": {
+        "title": "Remove a zone",
+        "data": {
+          "zone_id": "Zone to remove"
+        }
+      }
+    },
+    "abort": {
+      "no_zones": "No zones configured.",
+      "unknown_zone": "Zone not found."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "zone_state": {
+        "name": "State",
+        "state": {
+          "idle": "Idle",
+          "starting": "Starting",
+          "running": "Running",
+          "stabilizing": "Stabilizing",
+          "cooldown": "Cooldown",
+          "schedule_off": "Schedule off",
+          "manual_override_timed": "Override (timed)",
+          "manual_override_free": "Override (free)",
+          "window_open": "Window open"
+        }
+      },
+      "zone_regime": {
+        "name": "Régime",
+        "state": {
+          "none": "None",
+          "attaque": "Attack",
+          "stabilisation": "Stabilization",
+          "boost": "Boost"
+        }
+      },
+      "zone_room_temperature": {
+        "name": "Zone temperature"
+      },
+      "zone_setpoint_sent": {
+        "name": "Setpoint sent"
+      },
+      "zone_override_until": {
+        "name": "Override until"
+      }
+    },
+    "switch": {
+      "zone_auto": {
+        "name": "Auto control"
+      }
+    },
+    "select": {
+      "zone_mode": {
+        "name": "Mode",
+        "state": {
+          "auto": "Auto",
+          "off": "Off",
+          "boost": "Boost"
+        }
+      },
+      "zone_power": {
+        "name": "Power",
+        "state": {
+          "doux": "Gentle",
+          "normal": "Normal",
+          "agressif": "Aggressive"
+        }
+      },
+      "zone_fan_intensity": {
+        "name": "Fan intensity",
+        "state": {
+          "doux": "Gentle",
+          "normal": "Normal",
+          "fort": "Strong"
+        }
+      }
+    },
+    "number": {
+      "seuil_debut_chauffage": {
+        "name": "Heat start threshold"
+      },
+      "seuil_fin_chauffage": {
+        "name": "Heat stop threshold"
+      },
+      "seuil_debut_refroidissement": {
+        "name": "Cool start threshold"
+      },
+      "seuil_fin_refroidissement": {
+        "name": "Cool stop threshold"
+      },
+      "duree_stabilisation_min": {
+        "name": "Stabilization duration"
+      },
+      "duree_cooldown_min": {
+        "name": "Cooldown duration"
+      },
+      "override_duree_min": {
+        "name": "Override duration"
+      }
+    },
+    "button": {
+      "zone_boost": {
+        "name": "Boost 15 min"
+      },
+      "zone_reset_override": {
+        "name": "Resume auto"
+      },
+      "zone_force_start_cool": {
+        "name": "Start cooling"
+      },
+      "zone_force_start_heat": {
+        "name": "Start heating"
+      }
+    }
+  }
+}

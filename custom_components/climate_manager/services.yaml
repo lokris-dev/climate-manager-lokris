@@ -1,0 +1,56 @@
+set_mode:
+  name: Set zone mode
+  description: Change the mode of a zone (auto / off / boost).
+  fields:
+    zone_id:
+      name: Zone ID
+      description: ID interne de la zone (visible dans les attributs de l'entité sensor d'état).
+      required: true
+      example: rdc
+      selector:
+        text:
+    mode:
+      name: Mode
+      description: Mode global de la zone.
+      required: true
+      example: auto
+      selector:
+        select:
+          options:
+            - auto
+            - "off"
+            - boost
+
+force_off:
+  name: Force off
+  description: Force la zone en mode OFF (coupe la clim et empêche la reprise auto).
+  fields:
+    zone_id:
+      name: Zone ID
+      required: true
+      selector:
+        text:
+
+reset_override:
+  name: Reset override
+  description: Court-circuite l'override manuel en cours et rend la main à l'auto.
+  fields:
+    zone_id:
+      name: Zone ID
+      required: true
+      selector:
+        text:
+
+boost:
+  name: Boost
+  description: Active le mode boost pendant 15 minutes (consigne forte + ventilo 4 + swing direct).
+  fields:
+    zone_id:
+      name: Zone ID
+      required: true
+      selector:
+        text:
+
+reload_zones:
+  name: Reload zones
+  description: Recharge la configuration des zones sans redémarrer Home Assistant.

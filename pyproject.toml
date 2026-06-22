@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delormej_climate"
+version = "0.1.0"
+description = "Home Assistant custom_component for intelligent Daikin AC management"
+requires-python = ">=3.12"
+authors = [{name = "Jonathan DELORME"}]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",     # pycodestyle + pyflakes
+    "I",               # isort
+    "UP",              # pyupgrade
+    "B",               # bugbear
+    "ASYNC",           # async pitfalls
+    "RUF",             # ruff-specific
+]
+ignore = [
+    "E501",            # line too long (formatter handles)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"

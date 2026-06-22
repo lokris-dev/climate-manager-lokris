@@ -1,0 +1,204 @@
+{
+  "title": "Climate Manager",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Installer Climate Manager",
+        "description": "L'intégration s'installe sans configuration. Tu pourras ensuite ajouter des zones et configurer la présence depuis « Configurer »."
+      }
+    },
+    "abort": {
+      "already_configured": "Cette intégration est déjà configurée."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Climate Manager",
+        "description": "Choisis une action. Les seuils, planning et présence se règlent ensuite **par profil** dans la carte Lovelace, pas ici.",
+        "menu_options": {
+          "add_zone": "Ajouter une zone",
+          "edit_zone": "Modifier une zone",
+          "remove_zone": "Supprimer une zone",
+          "presence": "Présence globale (optionnel)"
+        }
+      },
+      "presence": {
+        "title": "Présence globale",
+        "description": "Optionnel — uniquement pour l'affichage \"Maison absente/présente\" dans la carte. Les gates de présence par profil se configurent dans la carte.",
+        "data": {
+          "presence_entity": "Entité de présence",
+          "presence_absent_states": "États considérés comme absent"
+        }
+      },
+      "add_zone": {
+        "title": "Ajouter une zone",
+        "description": "Identité de la zone + timings. Les seuils, le planning et la présence sont gérés par profil dans la carte.",
+        "data": {
+          "name": "Nom de la zone",
+          "climate_entities": "Splits clim de la zone (1 ou plusieurs)",
+          "temperature_sensors": "Capteurs de température (moyenne)",
+          "window_sensors": "Capteurs de fenêtres (optionnel)",
+          "duree_stabilisation_min": "Durée stabilisation",
+          "duree_cooldown_min": "Durée cooldown",
+          "override_duree_min": "Durée override manuel"
+        }
+      },
+      "edit_zone": {
+        "title": "Choisir la zone à modifier",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "edit_zone_form": {
+        "title": "Modifier la zone",
+        "description": "Les profils (seuils, planning, présence, puissance, ventilation) se modifient dans la carte Lovelace § Profils.",
+        "data": {
+          "name": "Nom de la zone",
+          "climate_entities": "Splits clim de la zone (1 ou plusieurs)",
+          "temperature_sensors": "Capteurs de température (moyenne)",
+          "window_sensors": "Capteurs de fenêtres (optionnel)",
+          "duree_stabilisation_min": "Durée stabilisation",
+          "duree_cooldown_min": "Durée cooldown",
+          "override_duree_min": "Durée override manuel"
+        }
+      },
+      "remove_zone": {
+        "title": "Supprimer une zone",
+        "data": {
+          "zone_id": "Zone à supprimer"
+        }
+      }
+    },
+    "abort": {
+      "no_zones": "Aucune zone configurée.",
+      "unknown_zone": "Zone introuvable."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "zone_state": {
+        "name": "État",
+        "state": {
+          "idle": "Inactif",
+          "starting": "Démarrage",
+          "running": "Actif",
+          "stabilizing": "Stabilisation",
+          "cooldown": "Cooldown",
+          "schedule_off": "Planning fermé",
+          "manual_override_timed": "Override (timed)",
+          "manual_override_free": "Override (libre)",
+          "window_open": "Fenêtre ouverte"
+        }
+      },
+      "zone_regime": {
+        "name": "Régime",
+        "state": {
+          "none": "Aucun",
+          "attaque": "Attaque",
+          "stabilisation": "Stabilisation",
+          "boost": "Boost"
+        }
+      },
+      "zone_room_temperature": {
+        "name": "T° zone"
+      },
+      "zone_setpoint_sent": {
+        "name": "Consigne envoyée"
+      },
+      "zone_override_until": {
+        "name": "Override jusqu'à"
+      }
+    },
+    "switch": {
+      "zone_auto": {
+        "name": "Pilotage auto"
+      }
+    },
+    "select": {
+      "zone_mode": {
+        "name": "Mode",
+        "state": {
+          "auto": "Auto",
+          "off": "Off",
+          "boost": "Boost"
+        }
+      },
+      "zone_power": {
+        "name": "Puissance",
+        "state": {
+          "doux": "Doux",
+          "normal": "Normal",
+          "agressif": "Agressif"
+        }
+      },
+      "zone_fan_intensity": {
+        "name": "Ventilation",
+        "state": {
+          "doux": "Doux",
+          "normal": "Normal",
+          "fort": "Fort"
+        }
+      }
+    },
+    "number": {
+      "seuil_debut_chauffage": {
+        "name": "Seuil début chauffage"
+      },
+      "seuil_fin_chauffage": {
+        "name": "Seuil fin chauffage"
+      },
+      "seuil_debut_refroidissement": {
+        "name": "Seuil début refroidissement"
+      },
+      "seuil_fin_refroidissement": {
+        "name": "Seuil fin refroidissement"
+      },
+      "duree_stabilisation_min": {
+        "name": "Durée stabilisation"
+      },
+      "duree_cooldown_min": {
+        "name": "Durée cooldown"
+      },
+      "override_duree_min": {
+        "name": "Durée override"
+      }
+    },
+    "button": {
+      "zone_boost": {
+        "name": "Boost 15 min"
+      },
+      "zone_reset_override": {
+        "name": "Reprendre auto"
+      },
+      "zone_force_start_cool": {
+        "name": "Démarrer refroidissement"
+      },
+      "zone_force_start_heat": {
+        "name": "Démarrer chauffage"
+      }
+    }
+  },
+  "services": {
+    "set_mode": {
+      "name": "Définir le mode",
+      "description": "Change le mode global d'une zone."
+    },
+    "force_off": {
+      "name": "Forcer arrêt",
+      "description": "Force la zone en mode OFF."
+    },
+    "reset_override": {
+      "name": "Annuler override",
+      "description": "Court-circuite l'override manuel en cours."
+    },
+    "boost": {
+      "name": "Boost 15 min",
+      "description": "Active le mode boost pour 15 minutes."
+    },
+    "reload_zones": {
+      "name": "Recharger les zones",
+      "description": "Recharge la configuration sans redémarrer HA."
+    }
+  }
+}

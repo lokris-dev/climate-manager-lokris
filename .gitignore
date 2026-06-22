@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# HA / dev
+.HA_VERSION
+home-assistant.log*
+config/
+
+# Secrets / env
+.env
+.hass-env
+*.token
+CLAUDE.md
+
+# Lovelace build
+lovelace/dist/
+lovelace/node_modules/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
