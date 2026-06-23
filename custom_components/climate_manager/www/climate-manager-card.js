@@ -344,7 +344,8 @@ class ClimateManagerCard extends HTMLElement {
     const el = e.target.closest("[data-act]");
     if (!el) return;
     const act = el.dataset.act;
-    if (act === "toggle-cfg") return; // <details> natif gère l'ouverture
+    // Laisse le comportement natif : ouverture <details> et clic dans les champs.
+    if (act === "toggle-cfg" || act === "number") return;
     e.preventDefault();
     const ent = el.dataset.entity;
     switch (act) {
