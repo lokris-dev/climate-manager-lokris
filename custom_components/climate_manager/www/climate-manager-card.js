@@ -12,6 +12,9 @@
  *   type: custom:climate-manager-card
  *   title: Climatisation            # optionnel
  *   show_settings: true             # optionnel (défaut true) — section Réglages
+ *   zone: openspace                 # optionnel — n'affiche QUE cette zone (mode
+ *   zones: [cuisine, openspace]     #   intégré : pas d'en-tête ni de pied, idéal
+ *                                   #   pour poser le widget d'une zone dans une pièce)
  */
 
 const POWER_LEVELS = [
@@ -32,6 +35,9 @@ const C = {
 
 const STYLES = `
   .cm-root { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .cm-root:has(.cm-embedded) { padding: 6px; }
+  .cm-embedded { display: flex; flex-direction: column; gap: 10px; }
+  .cm-embedded .cm-zone { margin: 0; }
   .cm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .cm-title { font-size: 1.3rem; font-weight: 600; }
   .cm-head-right { display: flex; align-items: center; gap: 8px; }
@@ -107,7 +113,16 @@ class ClimateManagerCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
     this._title = this._config.title || "Climatisation";
-    this._showSettings = this._config.show_settings !== false;
+    // Mode intégré : `zone: <id>` (ou `zones: [...]`) -> n'affiche que ces zones,
+    // sans l'en-tête global ni le pied de page. Idéal pour poser le widget d'une
+    // zone dans une pièce du dashboard.
+    const zc = this._config.zone ?? this._config.zones;
+    this._zoneFilter = zc == null ? null : (Array.isArray(zc) ? zc.map(String) : [String(zc)]);
+    this._embedded = !!this._zoneFilter;
+    // Réglages admin masqués par défaut en mode intégré (sauf show_settings: true).
+    this._showSettings = this._embedded
+      ? this._config.show_settings === true
+      : this._config.show_settings !== false;
   }
   static getStubConfig() {
     return { type: "custom:climate-manager-card", title: "Climatisation" };
@@ -209,14 +224,22 @@ class ClimateManagerCard extends HTMLElement {
   /* --------------------------------------------------------------- rendu */
 
   _update() {
-    const zones = this._zones();
+    let zones = this._zones();
+    if (this._zoneFilter) zones = zones.filter((z) => this._zoneFilter.includes(String(z.id)));
     if (!zones.length) {
-      this._body.innerHTML =
-        `<div class="cm-empty">Aucune zone trouvée.<br>L'intégration « Climate Manager » est-elle configurée ?</div>`;
+      this._body.innerHTML = this._embedded
+        ? `<div class="cm-empty">Zone introuvable.</div>`
+        : `<div class="cm-empty">Aucune zone trouvée.<br>L'intégration « Climate Manager » est-elle configurée ?</div>`;
       return;
     }
     const ctrl = this._controlSwitch();          // interrupteur maître (ou null)
     const observe = !!ctrl && !ctrl.on;          // mode observation = pilotage off
+    // Mode intégré : juste la/les zone(s), sans en-tête ni pied.
+    if (this._embedded) {
+      this._body.innerHTML =
+        `<div class="cm-zones cm-embedded">${zones.map((z) => this._zoneHtml(z, observe)).join("")}</div>`;
+      return;
+    }
     const absent = zones.some((z) => z.houseAbsent);
 
     let head;
