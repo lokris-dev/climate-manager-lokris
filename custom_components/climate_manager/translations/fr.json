@@ -199,6 +199,10 @@
     "reload_zones": {
       "name": "Recharger les zones",
       "description": "Recharge la configuration sans redémarrer HA."
+    },
+    "reset_daily": {
+      "name": "Réinitialiser les zones",
+      "description": "Remet toutes les zones en Marche + Normal et efface les overrides (équivalent du désarmement matinal)."
     }
   }
 }

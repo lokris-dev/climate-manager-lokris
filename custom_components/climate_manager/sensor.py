@@ -49,7 +49,12 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
         d = self._zone_data
         if not d:
             return None
+        cfg = d.get("config")
         attrs = {
+            "zone_name": getattr(cfg, "name", None),
+            "climate_entities": list(getattr(cfg, "climate_entities", []) or []),
+            "temperature_sensors": list(getattr(cfg, "temperature_sensors", []) or []),
+            "override_until_reset": getattr(cfg, "override_until_reset", False),
             "schedule_on": d.get("schedule_on"),
             "any_window_open": d.get("any_window_open"),
             "house_is_absent": d.get("house_is_absent"),

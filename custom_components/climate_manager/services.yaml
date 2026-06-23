@@ -54,3 +54,9 @@ boost:
 reload_zones:
   name: Reload zones
   description: Recharge la configuration des zones sans redémarrer Home Assistant.
+
+reset_daily:
+  name: Réinitialiser les zones
+  description: >-
+    Remet toutes les zones au profil par défaut (Marche + Normal) et efface les
+    overrides — équivalent du désarmement matinal de l'alarme.

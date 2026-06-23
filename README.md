@@ -62,42 +62,30 @@ Les futures versions remontent automatiquement comme update disponible dans HACS
 
 La carte Lovelace est embarquée dans le composant : elle est servie automatiquement à `/climate_manager/climate-manager-card.js` et enregistrée comme ressource Lovelace dès que l'intégration démarre.
 
-### Cartes Lovelace disponibles
+### Carte Lovelace — widget unique multi-zones
 
-Carte complète historique :
+Une **seule carte** affiche et gère **toutes les zones** (pas de config par zone) :
 
 ```yaml
 type: custom:climate-manager-card
-zone: rdc
-title: RDC
-climate_entity: climate.salon
+title: Climatisation          # optionnel
+show_settings: true           # optionnel (défaut true) — section ⚙ Réglages
 ```
 
-Widgets séparés, plus faciles à intégrer dans un dashboard clair / éditorial :
+La carte découvre les zones automatiquement (via le registre d'entités) et, pour
+chaque zone, propose :
 
-```yaml
-- type: custom:climate-manager-status-card
-  zone: rdc
-  title: État actuel
-  climate_entity: climate.salon
+- **Marche / Arrêt** + curseur d'**Intensité** (Doux / Normal / Frais) — zéro chiffre ;
+- la T° de la pièce, l'état (Refroidit / Chauffe / En attente / Pris en main…),
+  les splits pilotés et leur T° interne, la consigne envoyée ;
+- un bandeau **« Pris en main »** + bouton *Reprendre auto* quand un collègue a
+  la main ;
+- un volet **⚙ Réglages** (admin) pour éditer les seuils (début/fin chaud & froid)
+  et les durées ; les splits/capteurs y sont listés (modifiables via _Configurer_).
 
-- type: custom:climate-manager-pilotage-card
-  zone: rdc
-  title: Pilotage
-  climate_entity: climate.salon
-
-- type: custom:climate-manager-profiles-card
-  zone: rdc
-  title: Profils
-  climate_entity: climate.salon
-
-- type: custom:climate-manager-sessions-card
-  zone: rdc
-  title: Sessions
-  climate_entity: climate.salon
-```
-
-Alternative équivalente avec la carte principale : `widget: status`, `widget: pilotage`, `widget: profiles` ou `widget: sessions`.
+En haut : l'état du système (alarme désarmée = actif) et un bouton **↻ Réinitialiser**
+(remet toutes les zones en Marche + Normal — équivalent du désarmement matinal,
+via le service `climate_manager.reset_daily`).
 
 ## Migration depuis l'automation actuelle
 

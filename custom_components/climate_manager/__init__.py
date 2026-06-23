@@ -29,6 +29,7 @@ SERVICE_BOOST = "boost"
 SERVICE_FORCE_START = "force_start"
 SERVICE_RELOAD_ZONES = "reload_zones"
 SERVICE_UPDATE_PROFILES = "update_profiles"
+SERVICE_RESET_DAILY = "reset_daily"
 
 SCHEMA_ZONE_ID = vol.Schema({vol.Required("zone_id"): cv.string})
 SCHEMA_SET_MODE = vol.Schema(
@@ -294,6 +295,11 @@ def _register_services(hass: HomeAssistant) -> None:
         for coord in _all_coordinators(hass):
             await coord.async_reload_zones()
 
+    async def _reset_daily(_: ServiceCall) -> None:
+        """Reset manuel de toutes les zones (équivalent du désarmement matinal)."""
+        for coord in _all_coordinators(hass):
+            coord.reset_all_zones_to_default()
+
     async def _update_profiles(call: ServiceCall) -> None:
         coord, zone = _find_zone(hass, call.data["zone_id"])
         if zone is None:
@@ -315,13 +321,14 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_UPDATE_PROFILES, _update_profiles, schema=SCHEMA_UPDATE_PROFILES
     )
+    hass.services.async_register(DOMAIN, SERVICE_RESET_DAILY, _reset_daily)
 
 
 def _unregister_services(hass: HomeAssistant) -> None:
     for service in (
         SERVICE_SET_MODE, SERVICE_FORCE_OFF, SERVICE_RESET_OVERRIDE,
         SERVICE_BOOST, SERVICE_FORCE_START, SERVICE_RELOAD_ZONES,
-        SERVICE_UPDATE_PROFILES,
+        SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY,
     ):
         hass.services.async_remove(DOMAIN, service)
 
