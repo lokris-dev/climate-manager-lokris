@@ -21,6 +21,11 @@ UPDATE_INTERVAL_SECONDS = 30
 # ConfigEntry.data keys
 CONF_PRESENCE_ENTITY = "presence_entity"
 CONF_PRESENCE_ABSENT_STATES = "presence_absent_states"
+# Interrupteur maître : quand False, le composant lit tout (températures, états
+# des splits) et alimente la carte, mais N'ENVOIE AUCUNE commande aux clims
+# (mode observation). Le seed LOKRIS démarre à False pour voir le rendu sans
+# rien piloter ; defaut True partout ailleurs (comportement historique).
+CONF_CONTROL_ENABLED = "control_enabled"
 
 # Zone config keys
 CONF_ZONES = "zones"

@@ -113,6 +113,9 @@
     "switch": {
       "zone_auto": {
         "name": "Marche / Arrêt"
+      },
+      "control_enabled": {
+        "name": "Pilotage actif"
       }
     },
     "select": {

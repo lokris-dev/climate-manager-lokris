@@ -41,6 +41,11 @@ const STYLES = `
   .cm-reset { cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); border-radius: 8px; padding: 6px 10px; font-size: .82rem; display: inline-flex; gap: 6px; align-items: center; }
   .cm-reset:hover { border-color: var(--primary-color); color: var(--primary-color); }
 
+  .cm-paused { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: ${C.window}1f; border: 1px solid ${C.window}66; border-radius: 10px; padding: 10px 12px; font-size: .86rem; }
+  .cm-paused span { flex: 1; min-width: 220px; }
+  .cm-go { cursor: pointer; border: none; background: ${C.stab}; color: #fff; font-weight: 600; border-radius: 8px; padding: 8px 14px; font-size: .86rem; white-space: nowrap; }
+  .cm-go:hover { filter: brightness(1.08); }
+
   .cm-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
   .cm-zone { border: 1px solid var(--divider-color); border-left-width: 4px; border-radius: 12px; padding: 12px 12px 10px; background: var(--card-background-color); display: flex; flex-direction: column; gap: 9px; }
   .cm-zone.off { opacity: .72; }
@@ -56,6 +61,7 @@ const STYLES = `
   .cm-onoff { flex: 0 0 auto; border: none; cursor: pointer; border-radius: 8px; padding: 7px 12px; font-weight: 600; font-size: .82rem; color: #fff; }
   .cm-onoff.is-on { background: ${C.stab}; }
   .cm-onoff.is-off { background: var(--secondary-background-color); color: var(--secondary-text-color); }
+  .cm-onoff[disabled] { opacity: .45; cursor: not-allowed; }
 
   .cm-seg { display: inline-flex; flex: 1 1 auto; border: 1px solid var(--divider-color); border-radius: 8px; overflow: hidden; }
   .cm-seg button { flex: 1; border: none; cursor: pointer; background: transparent; color: var(--primary-text-color); padding: 7px 4px; font-size: .8rem; }
@@ -209,25 +215,57 @@ class ClimateManagerCard extends HTMLElement {
         `<div class="cm-empty">Aucune zone trouvée.<br>L'intégration « Climate Manager » est-elle configurée ?</div>`;
       return;
     }
+    const ctrl = this._controlSwitch();          // interrupteur maître (ou null)
+    const observe = !!ctrl && !ctrl.on;          // mode observation = pilotage off
     const absent = zones.some((z) => z.houseAbsent);
-    const sys = absent
-      ? `<span class="cm-sys"><span class="dot"></span>En veille · bâtiment fermé</span>`
-      : `<span class="cm-sys on"><span class="dot"></span>Système actif</span>`;
+
+    let head;
+    if (observe) {
+      head = `
+        <div class="cm-head">
+          <div class="cm-title">${esc(this._title)}</div>
+        </div>
+        <div class="cm-paused">
+          <span>⏸ <b>Mode observation</b> — aucune commande n'est envoyée aux clims. La carte affiche seulement les températures et l'état réel.</span>
+          <button class="cm-go" data-act="enable-control" data-entity="${esc(ctrl.eid)}">Activer le pilotage</button>
+        </div>`;
+    } else {
+      const sys = absent
+        ? `<span class="cm-sys"><span class="dot"></span>En veille · bâtiment fermé</span>`
+        : `<span class="cm-sys on"><span class="dot"></span>Système actif</span>`;
+      const obsBtn = ctrl
+        ? `<button class="cm-reset" data-act="disable-control" data-entity="${esc(ctrl.eid)}" title="Repasser en observation (ne plus piloter)">⏸ Observation</button>`
+        : "";
+      head = `
+        <div class="cm-head">
+          <div class="cm-title">${esc(this._title)}</div>
+          <div class="cm-head-right">
+            ${sys}
+            ${obsBtn}
+            <button class="cm-reset" data-act="reset-daily" title="Remet toutes les zones en Marche + Normal">↻ Réinitialiser</button>
+          </div>
+        </div>`;
+    }
 
     this._body.innerHTML = `
-      <div class="cm-head">
-        <div class="cm-title">${esc(this._title)}</div>
-        <div class="cm-head-right">
-          ${sys}
-          <button class="cm-reset" data-act="reset-daily" title="Remet toutes les zones en Marche + Normal">↻ Réinitialiser</button>
-        </div>
-      </div>
-      <div class="cm-zones">${zones.map((z) => this._zoneHtml(z)).join("")}</div>
+      ${head}
+      <div class="cm-zones">${zones.map((z) => this._zoneHtml(z, observe)).join("")}</div>
       <div class="cm-foot">Réglages structurels (ajout de zone, splits, capteurs) : <em>Paramètres → Appareils &amp; services → Climate Manager → Configurer</em>.</div>
     `;
   }
 
-  _zoneHtml(z) {
+  _controlSwitch() {
+    const ents = this._hass.entities || {};
+    for (const eid in ents) {
+      const e = ents[eid];
+      if (e.platform === "climate_manager" && e.translation_key === "control_enabled") {
+        return { eid, on: this._hass.states[eid]?.state === "on" };
+      }
+    }
+    return null;
+  }
+
+  _zoneHtml(z, observe) {
     const meta = this._stateMeta(z);
     const splitLine = z.splits.length
       ? z.splits
@@ -239,10 +277,11 @@ class ClimateManagerCard extends HTMLElement {
         `<button data-act="power" data-entity="${esc(z.eids.power)}" data-opt="${val}" class="${z.power === val ? "sel" : ""}">${lbl}</button>`
     ).join("");
 
+    const dis = observe ? "disabled" : "";
     const override = z.inOverride
       ? `<div class="cm-override">
            <span class="lbl">✋ Pris en main ${z.overrideUntilReset ? "jusqu'au prochain reset" : this._untilTxt(z.overrideUntil)}</span>
-           ${z.eids.resetOverride ? `<button class="cm-link" data-act="resume" data-entity="${esc(z.eids.resetOverride)}">Reprendre auto</button>` : ""}
+           ${z.eids.resetOverride ? `<button class="cm-link" data-act="resume" data-entity="${esc(z.eids.resetOverride)}" ${dis}>Reprendre auto</button>` : ""}
          </div>`
       : "";
 
@@ -262,8 +301,8 @@ class ClimateManagerCard extends HTMLElement {
         </div>
         <span class="cm-badge" style="background:${meta.color}">${esc(meta.label)}${z.windowsOpen ? " · fenêtre" : ""}</span>
         <div class="cm-row">
-          <button class="cm-onoff ${z.on ? "is-on" : "is-off"}" data-act="toggle" data-entity="${esc(z.eids.sw)}">${z.on ? "Marche" : "Arrêt"}</button>
-          <div class="cm-seg" ${z.on ? "" : "disabled"}>${seg}</div>
+          <button class="cm-onoff ${z.on ? "is-on" : "is-off"}" data-act="toggle" data-entity="${esc(z.eids.sw)}" ${dis}>${z.on ? "Marche" : "Arrêt"}</button>
+          <div class="cm-seg" ${z.on && !observe ? "" : "disabled"}>${seg}</div>
         </div>
         ${override}
         ${sentTxt}
@@ -360,6 +399,12 @@ class ClimateManagerCard extends HTMLElement {
         break;
       case "reset-daily":
         this._call("climate_manager", "reset_daily", {});
+        break;
+      case "enable-control":
+        this._call("switch", "turn_on", { entity_id: ent });
+        break;
+      case "disable-control":
+        this._call("switch", "turn_off", { entity_id: ent });
         break;
     }
   }

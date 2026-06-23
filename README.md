@@ -87,6 +87,19 @@ En haut : l'état du système (alarme désarmée = actif) et un bouton **↻ Ré
 (remet toutes les zones en Marche + Normal — équivalent du désarmement matinal,
 via le service `climate_manager.reset_daily`).
 
+### Mode observation (démarrage sûr)
+
+À la première installation, l'intégration démarre **en observation** : elle lit
+les températures et l'état réel des splits et **alimente la carte, mais n'envoie
+aucune commande** aux clims (elle ne se bat donc pas avec une automation
+existante). La carte affiche une bannière **⏸ Mode observation** + un bouton
+**Activer le pilotage**.
+
+Quand tu es prêt à piloter pour de vrai : clique **Activer le pilotage** (ou
+bascule l'entité `switch.…_pilotage_actif`), puis **↻ Réinitialiser** pour mettre
+toutes les zones en Marche + Normal. Pour revenir en lecture seule : bouton
+**⏸ Observation** dans l'en-tête.
+
 ## Migration depuis l'automation actuelle
 
 Une fois le composant en production stable, supprimer :

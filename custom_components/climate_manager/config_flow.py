@@ -28,6 +28,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_CLIMATE_ENTITIES,
     CONF_CLIMATE_ENTITY,
+    CONF_CONTROL_ENABLED,
     CONF_DUREE_COOLDOWN_MIN,
     CONF_DUREE_STABILISATION_MIN,
     CONF_OVERRIDE_DUREE_MIN,
@@ -184,11 +185,14 @@ class DelormejClimateConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
         # Fork LOKRIS : on pré-remplit les 9 zones réelles + le gating alarme.
+        # control_enabled=False → on démarre en OBSERVATION (rien n'est piloté)
+        # pour voir le rendu d'abord ; on active le pilotage via l'interrupteur
+        # maître quand on est prêt.
         from .seed import SEED_PRESENCE, seed_zones
 
         return self.async_create_entry(
             title="Climate Manager — LOKRIS",
-            data=dict(SEED_PRESENCE),
+            data={**SEED_PRESENCE, CONF_CONTROL_ENABLED: False},
             options={CONF_ZONES: seed_zones()},
         )
 

@@ -20,6 +20,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    CONF_CONTROL_ENABLED,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
     CONF_ZONES,
@@ -81,6 +82,26 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
 
     def zone(self, zone_id: str) -> Zone | None:
         return self._zones.get(zone_id)
+
+    def control_enabled(self) -> bool:
+        """Pilotage actif ? Quand False (mode observation), on ne tick pas et on
+        n'envoie aucune commande aux clims — on ne fait que lire pour la carte."""
+        return bool(self.entry.data.get(CONF_CONTROL_ENABLED, True))
+
+    async def async_set_control_enabled(self, enabled: bool) -> None:
+        """Active/désactive le pilotage global (interrupteur maître).
+
+        Met à jour ConfigEntry.data ; le listener d'update relance les zones
+        (en préservant l'état runtime) puis un refresh. Au passage à True, les
+        zones restent dans leur mode courant (souvent OFF après un seed
+        d'observation) → rien ne démarre tant qu'on ne met pas une zone en
+        Marche (ou qu'on ne déclenche pas reset_daily)."""
+        if self.control_enabled() == enabled:
+            return
+        self.hass.config_entries.async_update_entry(
+            self.entry, data={**self.entry.data, CONF_CONTROL_ENABLED: enabled}
+        )
+        await self.async_request_refresh()
 
     # Champs "pilotage" portés à la fois par la config et par les profils. Quand
     # l'un d'eux change (intensité collègue, seuils admin), on le propage aux
@@ -160,7 +181,11 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         await self._setup_state_listeners()
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Tick all zones."""
+        """Tick all zones — sauf en mode observation où on se contente de lire."""
+        if not self.control_enabled():
+            # Aucune mutation d'état, aucune commande : la carte reflète juste
+            # les températures et l'état réel des splits.
+            return self._build_coordinator_data()
         for zone in self._zones.values():
             inputs = self._gather_inputs(zone)
             commands = zone.tick(inputs)
@@ -192,6 +217,12 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         legacy_zones = legacy.get("zones", {}) if isinstance(legacy, dict) else {}
         for zid, zone in self._zones.items():
             zone.state.completed_cycles = list(legacy_zones.get(zid, []))
+        # Installation fraîche en mode observation : on affiche toutes les zones
+        # éteintes (rien n'est piloté de toute façon). L'utilisateur les remet en
+        # Marche après avoir activé le pilotage.
+        if not self.control_enabled():
+            for zone in self._zones.values():
+                zone.state.mode = ZoneMode.OFF
         self._last_runtime_payload = self._runtime_payload()
 
     def _runtime_payload(self) -> dict[str, Any]:
