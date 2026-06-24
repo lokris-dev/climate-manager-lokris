@@ -141,6 +141,10 @@ class ClimateManagerCard extends HTMLElement {
 
   _build() {
     if (!this._open) this._open = new Set();
+    // Le custom element est inline par défaut -> il rétrécit au contenu dans une
+    // cellule de grille (vue sections). On force le remplissage de la largeur.
+    this.style.display = "block";
+    this.style.width = "100%";
     const card = document.createElement("ha-card");
     const style = document.createElement("style");
     style.textContent = STYLES;
