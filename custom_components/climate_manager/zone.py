@@ -699,6 +699,7 @@ class Zone:
         """Mode=OFF : ensure the clim is off, do nothing else."""
         self._transition(ZoneState.IDLE, inp.now_ts)
         self.state.regime = Regime.NONE
+        self.state.last_hvac_sent = HVACMode.OFF  # intention = éteint
         if inp.clim_current_hvac_mode != HVACMode.OFF:
             return [self._cmd_turn_off()]
         return []
@@ -707,6 +708,7 @@ class Zone:
         """Return commands if a hard gate (window/schedule/override) overrides flow."""
         # Window open
         if inp.any_window_open:
+            self.state.last_hvac_sent = HVACMode.OFF  # intention = éteint
             if self.state.state != ZoneState.WINDOW_OPEN:
                 self._transition(ZoneState.WINDOW_OPEN, inp.now_ts)
                 self.state.regime = Regime.NONE
@@ -719,6 +721,7 @@ class Zone:
             if self.state.state == ZoneState.MANUAL_OVERRIDE_FREE:
                 # User is running clim manually with schedule off — leave it alone
                 return []
+            self.state.last_hvac_sent = HVACMode.OFF  # intention = éteint
             if self.state.state != ZoneState.SCHEDULE_OFF:
                 self._transition(ZoneState.SCHEDULE_OFF, inp.now_ts)
                 self.state.regime = Regime.NONE
@@ -865,6 +868,7 @@ class Zone:
             # direction dès que la T° franchira un seuil.
             if self.config.pendulum_idle:
                 return []
+            self.state.last_hvac_sent = HVACMode.OFF  # intention = éteint
             if inp.clim_current_hvac_mode != HVACMode.OFF:
                 return [self._cmd_turn_off()]
             return []
@@ -897,17 +901,20 @@ class Zone:
         if self.state.state != ZoneState.RUNNING:
             self._transition(ZoneState.RUNNING, inp.now_ts)
         self.state.regime = Regime.BOOST
+        self.state.last_hvac_sent = target_mode  # intention, même si no-op
 
         cmds: list[Command] = []
         if inp.clim_current_hvac_mode != target_mode:
             cmds.append(self._cmd_set_hvac_mode(target_mode))
         setpoint = self._setpoint_for_offset(inp, BOOST_OFFSET, target_mode)
-        if setpoint is not None and self._setpoint_should_send(setpoint, inp):
-            cmds.append(self._cmd_set_temperature(setpoint))
-            self.state.last_setpoint_sent = setpoint
-        if inp.supports_fan_mode and inp.clim_current_fan_mode != BOOST_FAN_MODE:
-            cmds.append(self._cmd_set_fan_mode(BOOST_FAN_MODE))
-            self.state.last_fan_sent = BOOST_FAN_MODE
+        if setpoint is not None:
+            if self._setpoint_should_send(setpoint, inp):
+                cmds.append(self._cmd_set_temperature(setpoint))
+            self.state.last_setpoint_sent = setpoint  # intention, même si no-op
+        if inp.supports_fan_mode:
+            self.state.last_fan_sent = BOOST_FAN_MODE  # intention, même si no-op
+            if inp.clim_current_fan_mode != BOOST_FAN_MODE:
+                cmds.append(self._cmd_set_fan_mode(BOOST_FAN_MODE))
         if inp.supports_windnice and inp.clim_current_swing_mode != "swing":
             cmds.append(self._cmd_set_swing_mode("swing"))
         if cmds:
@@ -964,6 +971,10 @@ class Zone:
         if target_mode is None:
             # Could not decide — be safe and do nothing this tick
             return []
+        # Intention de direction : mémorisée même si aucune commande n'est
+        # réémise (split déjà dans le bon mode). Sert à distinguer un écho du
+        # polling d'une vraie prise en main.
+        self.state.last_hvac_sent = target_mode
 
         cmds: list[Command] = []
         p = self._active(inp)
@@ -980,16 +991,18 @@ class Zone:
             cmds.extend(self._emit_per_split_setpoints(inp, regime, target_mode, p))
         else:
             setpoint = self._setpoint_for_offset(inp, offset, target_mode)
-            if setpoint is not None and self._setpoint_should_send(setpoint, inp):
-                cmds.append(self._cmd_set_temperature(setpoint))
-                self.state.last_setpoint_sent = setpoint
+            if setpoint is not None:
+                if self._setpoint_should_send(setpoint, inp):
+                    cmds.append(self._cmd_set_temperature(setpoint))
+                self.state.last_setpoint_sent = setpoint  # intention, même si no-op
 
         # Fan — driven by the FAN profile, and only if the clim has fan_modes at all
         if inp.supports_fan_mode:
             target_fan = _fan_for_regime(regime, fan_profile)
-            if target_fan and inp.clim_current_fan_mode != target_fan:
-                cmds.append(self._cmd_set_fan_mode(target_fan))
-                self.state.last_fan_sent = target_fan
+            if target_fan:
+                self.state.last_fan_sent = target_fan  # intention, même si no-op
+                if inp.clim_current_fan_mode != target_fan:
+                    cmds.append(self._cmd_set_fan_mode(target_fan))
 
         # Swing global (windnice) — seulement si pas de swing configuré par split
         if inp.supports_windnice and not self.config.splits_config \
@@ -1112,6 +1125,7 @@ class Zone:
         target_mode = self.state.active_direction or self._current_active_mode(inp)
         if target_mode is None:
             return []
+        self.state.last_hvac_sent = target_mode  # intention de direction (pendule)
 
         # Par split : chaque split décide attaque/relâchement selon SA cible
         # propre (§3) — un split réglé sur 24°C relâche avant un split réglé
@@ -1187,12 +1201,13 @@ class Zone:
                 offset = _offset_for_regime(Regime.ATTAQUE, spp)
                 sp = self._setpoint_for_split_anchor(anchor, offset, target_mode, inp)
 
-            if sp is not None and self._setpoint_should_send(sp, inp):
-                cmds.append(Command(
-                    "climate", "set_temperature",
-                    {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
-                ))
-                self.state.last_setpoint_sent = sp
+            if sp is not None:
+                if self._setpoint_should_send(sp, inp):
+                    cmds.append(Command(
+                        "climate", "set_temperature",
+                        {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
+                    ))
+                self.state.last_setpoint_sent = sp  # intention (dernier split), même si no-op
 
             swing = split_cfg.get("swing")
             if swing:
@@ -1217,6 +1232,7 @@ class Zone:
         """
         power_profile = POWER_PROFILES.get(p.power, POWER_PROFILES[DEFAULT_POWER])
         cmds: list[Command] = []
+        self.state.last_hvac_sent = target_mode  # intention de direction (relâchement)
 
         # Mode HVAC inchangé (le split reste dans son sens)
         if inp.clim_current_hvac_mode != target_mode:
@@ -1231,12 +1247,13 @@ class Zone:
                 release_offset = spp.get("release", power_profile.get("release", 3.0))
                 anchor = inp.clim_internal_by_entity.get(entity_id)
                 sp = self._setpoint_release_for_split(anchor, release_offset, target_mode, inp)
-                if sp is not None and self._setpoint_should_send(sp, inp):
-                    cmds.append(Command(
-                        "climate", "set_temperature",
-                        {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
-                    ))
-                    self.state.last_setpoint_sent = sp
+                if sp is not None:
+                    if self._setpoint_should_send(sp, inp):
+                        cmds.append(Command(
+                            "climate", "set_temperature",
+                            {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
+                        ))
+                    self.state.last_setpoint_sent = sp  # intention, même si no-op
                 split_swing = split_cfg.get("swing")
                 if split_swing:
                     cmds.append(Command(
@@ -1246,9 +1263,10 @@ class Zone:
         else:
             release_offset = power_profile.get("release", 3.0)
             setpoint = self._setpoint_release_offset(inp, release_offset, target_mode)
-            if setpoint is not None and self._setpoint_should_send(setpoint, inp):
-                cmds.append(self._cmd_set_temperature(setpoint))
-                self.state.last_setpoint_sent = setpoint
+            if setpoint is not None:
+                if self._setpoint_should_send(setpoint, inp):
+                    cmds.append(self._cmd_set_temperature(setpoint))
+                self.state.last_setpoint_sent = setpoint  # intention, même si no-op
 
         if cmds:
             self.state.last_command_ts = inp.now_ts

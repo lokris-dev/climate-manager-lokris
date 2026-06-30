@@ -466,8 +466,15 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             return
         old_state = pending["old_state"]
         new_state = pending["new_state"]
-        # Echo check: latest state matches what we last commanded → no override.
-        if _is_echo_of_intent(zone, new_state.attributes or {}):
+        # Echo check: latest state matches what we last intended → no override.
+        if _is_echo_of_intent(zone, new_state):
+            return
+        # No-intent guard: tant que le module n'a pas établi d'intention pour
+        # cette zone (cold start, reprise pas encore confirmée par un tick), on
+        # ne déclenche pas d'override sur l'état pré-existant du device — sinon,
+        # sur du matériel en polling, la zone retombe en boucle en override
+        # avant même d'avoir pu être pilotée.
+        if zone.state.last_hvac_sent is None and zone.state.last_setpoint_sent is None:
             return
         # Cumulative diff: in the X→Y→X flap, old.temperature == new.temperature
         # so _user_action_changed returns False here and we bail.
@@ -1026,23 +1033,38 @@ def _consensus_setpoint(setpoints: list[float]) -> float | None:
     return None
 
 
-def _is_echo_of_intent(zone: Zone, new_attrs: dict[str, Any]) -> bool:
-    """Pure helper: True iff the post-debounce attributes match what the zone
-    last commanded — i.e. this state_changed burst is just the Daikin
-    integration echoing our own writes back at us.
+def _is_echo_of_intent(zone: Zone, new_state: Any) -> bool:
+    """Pure helper: True iff the device's post-debounce state matches what the
+    zone last *intended* (hvac mode + setpoint + fan) — i.e. this state_changed
+    is just the clim reflecting our own writes back at us.
 
-    We only consider it an echo when *every* attribute we have an intent for
-    matches. Attributes we never set (preset_mode, swing_horizontal_mode,
-    target_temp_high/low) are not considered: any movement on those still
-    counts as a user action and falls through to the cumulative-diff check.
+    Value-based on purpose: polling integrations (Hitachi/Modbus) re-emit their
+    state periodically with a *fresh* context, so the ContextTracker can't catch
+    those echoes. By comparing the reported state to our recorded intent we stay
+    robust regardless of which context produced the event. Whoever moved the
+    unit, if it now matches what we want, it is not a manual override.
+
+    Intent is recorded on every tick (even when the command is a no-op because
+    the unit was already there), so `last_*_sent` reflects our desired state,
+    not merely the last dispatched service call.
     """
-    last_sp = zone.state.last_setpoint_sent
-    if last_sp is None:
+    st = zone.state
+    intent_mode = st.last_hvac_sent
+    intent_sp = st.last_setpoint_sent
+    if intent_mode is None and intent_sp is None:
+        return False  # aucune intention établie → laisser le no-intent guard décider
+    attrs = (new_state.attributes or {}) if new_state is not None else {}
+    # Mode : si on a une intention de direction, l'état doit correspondre.
+    if intent_mode is not None and new_state is not None and new_state.state != intent_mode:
         return False
-    cur_sp = _as_float(new_attrs.get(ATTR_TEMPERATURE))
-    if cur_sp is None or abs(cur_sp - last_sp) >= SETPOINT_NOOP_DELTA:
-        return False
-    last_fan = zone.state.last_fan_sent
-    if last_fan is not None and new_attrs.get(ATTR_FAN_MODE) != last_fan:
+    # Consigne : pertinente seulement hors "off", et seulement en mono-split
+    # (en multi-splits, last_setpoint_sent ne porte qu'un seul split → on se
+    # contente alors du mode + ventilo).
+    if intent_mode != "off" and not zone.config.splits_config and intent_sp is not None:
+        cur_sp = _as_float(attrs.get(ATTR_TEMPERATURE))
+        if cur_sp is None or abs(cur_sp - intent_sp) >= SETPOINT_NOOP_DELTA:
+            return False
+    last_fan = st.last_fan_sent
+    if last_fan is not None and attrs.get(ATTR_FAN_MODE) not in (None, last_fan):
         return False
     return True
