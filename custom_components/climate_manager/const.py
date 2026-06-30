@@ -27,6 +27,22 @@ CONF_PRESENCE_ABSENT_STATES = "presence_absent_states"
 # rien piloter ; defaut True partout ailleurs (comportement historique).
 CONF_CONTROL_ENABLED = "control_enabled"
 
+# Mode pendule continu : quand True, le split RESTE allumé après avoir atteint la
+# cible (consigne relâchement au lieu de turn_off). Flag système (ConfigEntry.data).
+CONF_PENDULUM_IDLE = "pendulum_idle"
+DEFAULT_PENDULUM_IDLE = False
+
+# Protection hors-gel (système — ConfigEntry.data, pas par zone)
+CONF_FROST_PROTECTION_ENABLED = "frost_protection_enabled"
+CONF_FROST_MIN_TEMP = "frost_min_temp"       # °C : déclenche le chauffage si T° moy. ≤ ce seuil
+CONF_FROST_MAX_TEMP = "frost_max_temp"       # °C : déclenche la climatisation si T° moy. ≥ ce seuil
+CONF_FROST_DURATION_MIN = "frost_duration_min"  # durée FIXE du cycle hors-gel (minutes)
+
+DEFAULT_FROST_PROTECTION_ENABLED = False
+DEFAULT_FROST_MIN_TEMP = 8.0
+DEFAULT_FROST_MAX_TEMP = 32.0
+DEFAULT_FROST_DURATION_MIN = 120
+
 # Zone config keys
 CONF_ZONES = "zones"
 CONF_ZONE_ID = "id"
@@ -188,10 +204,13 @@ class Aggressivity:
 
 
 # Offsets °C par régime, signe appliqué au moment du pilotage selon hvac_mode.
+# "release" : offset pendule — consigne de relâchement quand la cible est atteinte.
+# En cool : consigne = ancre + release (AU-DESSUS de la sonde → split allumé mais idle).
+# En heat : consigne = ancre - release (EN-DESSOUS de la sonde).
 POWER_PROFILES: dict[str, dict] = {
-    "doux":     {"attaque": 3.0, "stabilisation": 1.0},
-    "normal":   {"attaque": 5.0, "stabilisation": 1.5},
-    "agressif": {"attaque": 7.0, "stabilisation": 2.0},
+    "doux":     {"attaque": 3.0, "stabilisation": 1.0, "release": 2.0},
+    "normal":   {"attaque": 5.0, "stabilisation": 1.5, "release": 3.0},
+    "agressif": {"attaque": 7.0, "stabilisation": 2.0, "release": 4.0},
 }
 
 # fan_mode par régime. Valeurs Hitachi/Modbus : auto, low, medium, high, top

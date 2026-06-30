@@ -37,6 +37,7 @@ from .const import (
     DEFAULT_DUREE_STABILISATION_MIN,
     DEFAULT_FAN_INTENSITY,
     DEFAULT_OVERRIDE_DUREE_MIN,
+    DEFAULT_PENDULUM_IDLE,
     DEFAULT_POWER,
     DEFAULT_SETPOINT_STEP,
     DEFAULT_SEUIL_DEBUT_CHAUFFAGE,
@@ -97,6 +98,10 @@ class ZoneInputs:
     clim_internal_temperatures: tuple[float, ...] = ()
     # Pas de consigne de la clim (target_temp_step). Hitachi/Modbus = 1.0.
     clim_setpoint_step: float = DEFAULT_SETPOINT_STEP
+    # Sonde interne PAR split (entity_id → T°). Nécessaire pour le pilotage
+    # par split (§3) : chaque split reçoit une consigne ancrée sur SA propre
+    # sonde plutôt que sur la moyenne zone.
+    clim_internal_by_entity: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -137,6 +142,10 @@ class ZoneRuntimeState:
     boost_until_ts: float | None = None
     mode: str = ZoneMode.AUTO  # auto / off / boost
     forced_direction: str | None = None  # 'cool' | 'heat' | None — set by force_start
+    # Direction verrouillée par le pendule (§1). Distincte de forced_direction :
+    # elle est engagée par le seuil de début et libérée uniquement quand la pièce
+    # franchit le seuil de début OPPOSÉ. Persistée pour survivre aux restarts HA.
+    active_direction: str | None = None  # 'cool' | 'heat' | None — pendule uniquement
     # Wall-time of the latest entry into STARTING. Survives RUNNING and
     # STABILIZING so the UI can render "démarré il y a Xmin" across the whole
     # cycle. Cleared whenever the zone leaves the active states.
@@ -165,6 +174,7 @@ class ZoneRuntimeState:
             "boost_until_ts": self.boost_until_ts,
             "mode": self.mode,
             "forced_direction": self.forced_direction,
+            "active_direction": self.active_direction,
             "cycle_started_ts": self.cycle_started_ts,
             "cycle_start_room_temp": self.cycle_start_room_temp,
             "cycle_start_profile_name": self.cycle_start_profile_name,
@@ -194,6 +204,7 @@ class ZoneRuntimeState:
             boost_until_ts=_as_optional_float(data.get("boost_until_ts")),
             mode=mode if mode in valid_modes else ZoneMode.AUTO,
             forced_direction=data.get("forced_direction"),
+            active_direction=data.get("active_direction"),
             cycle_started_ts=_as_optional_float(data.get("cycle_started_ts")),
             cycle_start_room_temp=_as_optional_float(data.get("cycle_start_room_temp")),
             cycle_start_profile_name=data.get("cycle_start_profile_name"),
@@ -318,6 +329,15 @@ class ZoneConfig:
     # construction, __post_init__ synthesises one from the legacy fields so
     # an upgraded config keeps the same behaviour without any user action.
     profiles: list[Profile] = field(default_factory=list)
+    # Mode pendule continu (§1). Flag système propagé par le coordinator.
+    # Quand True : le split reste allumé en permanence (consigne de relâchement
+    # quand la cible est atteinte au lieu de turn_off). Défaut False = comportement
+    # historique — TOUS les tests existants passent avec False.
+    pendulum_idle: bool = DEFAULT_PENDULUM_IDLE
+    # Paramètres par split (§3). Clé = entity_id du split.
+    # Valeurs possibles par entrée : target (float|None), power (str|None), swing (str|None).
+    # None = hériter du niveau zone. Vide = comportement inchangé (tests existants OK).
+    splits_config: dict[str, dict] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Normalise le couple climate_entity / climate_entities pour que les deux
@@ -378,6 +398,8 @@ class ZoneConfig:
                 d.get("aggressivity", DEFAULT_AGGRESSIVITY)
             ))),
             profiles=profiles,
+            pendulum_idle=bool(d.get("pendulum_idle", DEFAULT_PENDULUM_IDLE)),
+            splits_config=dict(d.get("splits_config") or {}),
         )
 
 
@@ -723,7 +745,19 @@ class Zone:
         return None  # fall through to regular flow
 
     def _maybe_advance_timed_transitions(self, inp: ZoneInputs) -> None:
-        """STABILIZING → COOLDOWN → IDLE based on elapsed time."""
+        """STABILIZING → COOLDOWN → IDLE based on elapsed time.
+
+        En mode pendule, STABILIZING/COOLDOWN ne sont pas utilisés comme
+        transitions automatiques (le split reste actif — pas de turn_off).
+        Les états sont conservés dans l'enum pour la rétro-compat from_dict.
+        """
+        if self.config.pendulum_idle:
+            # Pendule : si on se retrouve dans STABILIZING/COOLDOWN (état hérité
+            # d'un démarrage pré-1.4 ou d'une bascule du flag), on revient
+            # directement en RUNNING pour reprendre le cycle continu.
+            if self.state.state in (ZoneState.STABILIZING, ZoneState.COOLDOWN):
+                self._transition(ZoneState.RUNNING, inp.now_ts)
+            return
         if self.state.state == ZoneState.STABILIZING:
             elapsed = inp.now_ts - self.state.last_state_transition_ts
             if elapsed >= self.config.duree_stabilisation_min * 60:
@@ -749,6 +783,10 @@ class Zone:
             return
         p = self._active(inp)
 
+        if self.config.pendulum_idle:
+            self._decide_pendulum(inp, p)
+            return
+
         if self.state.state == ZoneState.IDLE:
             if inp.supports_cool and inp.room_temperature > p.seuil_debut_refroidissement:
                 self._transition(ZoneState.STARTING, inp.now_ts)
@@ -762,19 +800,66 @@ class Zone:
             elif in_cool and inp.room_temperature <= p.seuil_fin_refroidissement:
                 self._transition(ZoneState.STABILIZING, inp.now_ts)
 
+    def _decide_pendulum(self, inp: ZoneInputs, p: Profile) -> None:
+        """Logique de décision en mode pendule continu.
+
+        La direction est verrouillée (active_direction) dès le premier
+        franchissement de seuil. Elle n'est libérée que si la T° pièce
+        franchit le seuil de DÉBUT OPPOSÉ — ce qui est très rare en
+        pratique (il faudrait qu'un bureau refroidisse jusqu'au seuil de
+        chauffage en plein été). Entre ces deux extrêmes, le split alterne
+        attaque / relâchement selon que la cible est atteinte ou non.
+        """
+        rt = inp.room_temperature
+        if rt is None:
+            return
+        ad = self.state.active_direction
+
+        # Déverrouillage : franchissement du seuil de début OPPOSÉ
+        if ad == HVACMode.COOL and inp.supports_heat and rt < p.seuil_debut_chauffage:
+            self.state.active_direction = None
+            ad = None
+        elif ad == HVACMode.HEAT and inp.supports_cool and rt > p.seuil_debut_refroidissement:
+            self.state.active_direction = None
+            ad = None
+
+        # Engagement d'une direction si aucune n'est verrouillée
+        if ad is None:
+            if inp.supports_cool and rt > p.seuil_debut_refroidissement:
+                self.state.active_direction = HVACMode.COOL
+            elif inp.supports_heat and rt < p.seuil_debut_chauffage:
+                self.state.active_direction = HVACMode.HEAT
+
+        # Transitions d'état : IDLE → STARTING dès qu'on a une direction
+        if self.state.state == ZoneState.IDLE and self.state.active_direction is not None:
+            self._transition(ZoneState.STARTING, inp.now_ts)
+        # RUNNING : si on n'a pas de active_direction (restart depuis un état
+        # antérieur), on la déduit du mode courant du split.
+        elif self.state.state == ZoneState.RUNNING and self.state.active_direction is None:
+            if inp.clim_current_hvac_mode in (HVACMode.COOL, HVACMode.HEAT):
+                self.state.active_direction = inp.clim_current_hvac_mode
+        # En RUNNING : PAS de transition vers STABILIZING (géré dans _maybe_advance)
+
     def _pilot(self, inp: ZoneInputs) -> list[Command]:
         """Translate the current state into commands."""
         if self.state.state in (ZoneState.IDLE, ZoneState.COOLDOWN):
             self.state.regime = Regime.NONE
+            # Pendule : ne jamais éteindre quand le système est actif.
+            # La clim reste allumée ; la prochaine décision réengagera une
+            # direction dès que la T° franchira un seuil.
+            if self.config.pendulum_idle:
+                return []
             if inp.clim_current_hvac_mode != HVACMode.OFF:
                 return [self._cmd_turn_off()]
             return []
 
         if self.state.state == ZoneState.STARTING:
-            # First cycle in active mode → ATTAQUE
+            # Premier tick en mode actif → ATTAQUE pleine
             return self._emit_active(inp, Regime.ATTAQUE, force_hvac=True)
 
         if self.state.state == ZoneState.RUNNING:
+            if self.config.pendulum_idle:
+                return self._emit_active_pendulum(inp)
             regime = self._compute_regime(inp)
             return self._emit_active(inp, regime, force_hvac=False)
 
@@ -840,6 +925,13 @@ class Zone:
         # (capability already checked at force_start time).
         if self.state.forced_direction in (HVACMode.COOL, HVACMode.HEAT):
             return self.state.forced_direction
+        # Pendule : direction verrouillée → la respecter même si la T° est
+        # revenue dans la bande morte (cas release — on reste actif dans ce sens).
+        if (
+            self.config.pendulum_idle
+            and self.state.active_direction in (HVACMode.COOL, HVACMode.HEAT)
+        ):
+            return self.state.active_direction
         if inp.room_temperature is None:
             return None
         p = self._active(inp)
@@ -862,16 +954,19 @@ class Zone:
         power_profile = POWER_PROFILES.get(p.power, POWER_PROFILES[DEFAULT_POWER])
         fan_profile = FAN_PROFILES.get(p.fan_intensity, FAN_PROFILES[DEFAULT_FAN_INTENSITY])
 
-        # HVAC mode
+        # HVAC mode (toujours groupé — direction commune à tous les splits)
         if force_hvac or inp.clim_current_hvac_mode != target_mode:
             cmds.append(self._cmd_set_hvac_mode(target_mode))
 
-        # Setpoint — driven by the POWER profile
+        # Consigne — par split si splits_config non vide, sinon groupée
         offset = _offset_for_regime(regime, power_profile)
-        setpoint = self._setpoint_for_offset(inp, offset, target_mode)
-        if setpoint is not None and self._setpoint_should_send(setpoint, inp):
-            cmds.append(self._cmd_set_temperature(setpoint))
-            self.state.last_setpoint_sent = setpoint
+        if self.config.splits_config:
+            cmds.extend(self._emit_per_split_setpoints(inp, regime, target_mode, p))
+        else:
+            setpoint = self._setpoint_for_offset(inp, offset, target_mode)
+            if setpoint is not None and self._setpoint_should_send(setpoint, inp):
+                cmds.append(self._cmd_set_temperature(setpoint))
+                self.state.last_setpoint_sent = setpoint
 
         # Fan — driven by the FAN profile, and only if the clim has fan_modes at all
         if inp.supports_fan_mode:
@@ -880,8 +975,9 @@ class Zone:
                 cmds.append(self._cmd_set_fan_mode(target_fan))
                 self.state.last_fan_sent = target_fan
 
-        # Swing — only if 'windnice' is in the clim's swing_modes list
-        if inp.supports_windnice and inp.clim_current_swing_mode != DEFAULT_SWING_MODE:
+        # Swing global (windnice) — seulement si pas de swing configuré par split
+        if inp.supports_windnice and not self.config.splits_config \
+                and inp.clim_current_swing_mode != DEFAULT_SWING_MODE:
             cmds.append(self._cmd_set_swing_mode(DEFAULT_SWING_MODE))
 
         if cmds:
@@ -922,6 +1018,264 @@ class Zone:
         step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
         rounded = round(raw / step) * step
         return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
+
+    def _setpoint_release_offset(
+        self, inp: ZoneInputs, offset: float, target_mode: str
+    ) -> float | None:
+        """Consigne de relâchement pendule (signe INVERSÉ par rapport à l'attaque).
+
+        En cool : anchor + offset → AU-DESSUS de la sonde → le compresseur
+        ralentit (sa cible est déjà atteinte) mais le split reste allumé.
+        En heat : anchor - offset → EN-DESSOUS de la sonde → même principe.
+        """
+        anchor = self._anchor_internal_temperature(inp, target_mode)
+        if anchor is None:
+            return None
+        # Signe inversé : cool = positif, heat = négatif
+        signed = -offset if target_mode == HVACMode.HEAT else offset
+        raw = anchor + signed
+        step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
+        rounded = round(raw / step) * step
+        return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
+
+    def _setpoint_for_split_anchor(
+        self, anchor: float | None, offset: float, target_mode: str, inp: ZoneInputs
+    ) -> float | None:
+        """Consigne d'attaque pour un split avec son ancre propre.
+
+        Si anchor est None, repli sur l'ancre groupe (_setpoint_for_offset).
+        """
+        if anchor is None:
+            return self._setpoint_for_offset(inp, offset, target_mode)
+        signed = offset if target_mode == HVACMode.HEAT else -offset
+        raw = anchor + signed
+        step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
+        rounded = round(raw / step) * step
+        return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
+
+    def _setpoint_release_for_split(
+        self, anchor: float | None, offset: float, target_mode: str, inp: ZoneInputs
+    ) -> float | None:
+        """Consigne de relâchement pendule pour un split avec son ancre propre."""
+        if anchor is None:
+            return self._setpoint_release_offset(inp, offset, target_mode)
+        signed = -offset if target_mode == HVACMode.HEAT else offset
+        raw = anchor + signed
+        step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
+        rounded = round(raw / step) * step
+        return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
+
+    # --- Pendule continu (pendulum_idle=True) ---
+
+    def _is_pendulum_release(
+        self, inp: ZoneInputs, p: Profile, target_mode: str
+    ) -> bool:
+        """True si la T° pièce a atteint la cible → phase de relâchement pendule.
+
+        Cool : T° pièce ≤ seuil_fin_refroidissement → cible atteinte → release.
+        Heat : T° pièce ≥ seuil_fin_chauffage → cible atteinte → release.
+        """
+        rt = inp.room_temperature
+        if rt is None:
+            return False
+        if target_mode == HVACMode.COOL:
+            return rt <= p.seuil_fin_refroidissement
+        if target_mode == HVACMode.HEAT:
+            return rt >= p.seuil_fin_chauffage
+        return False
+
+    def _emit_active_pendulum(self, inp: ZoneInputs) -> list[Command]:
+        """Pilotage en mode pendule continu (RUNNING).
+
+        Attaque si la pièce est encore au-delà de la cible dans le sens actif.
+        Relâchement si la cible est atteinte : le split reste allumé mais la
+        consigne inversée fait ralentir le compresseur au lieu de l'éteindre.
+        Ce cycle «pendule» évite le retard thermique du turn_off/redémarrage.
+        """
+        p = self._active(inp)
+        target_mode = self.state.active_direction or self._current_active_mode(inp)
+        if target_mode is None:
+            return []
+
+        # Par split : chaque split décide attaque/relâchement selon SA cible
+        # propre (§3) — un split réglé sur 24°C relâche avant un split réglé
+        # sur 22°C dans la même pièce.
+        if self.config.splits_config:
+            return self._emit_pendulum_per_split(inp, target_mode, p)
+
+        if self._is_pendulum_release(inp, p, target_mode):
+            self.state.regime = Regime.STABILISATION  # affiché comme «maintien» dans l'UI
+            return self._emit_release(inp, target_mode, p)
+        else:
+            self.state.regime = Regime.ATTAQUE
+            return self._emit_active(inp, Regime.ATTAQUE, force_hvac=False)
+
+    def _split_effective_target(
+        self, split_cfg: dict, p: Profile, target_mode: str
+    ) -> float | None:
+        """Cible de confort effective d'un split : la sienne ou celle héritée
+        de la zone (seuil_fin du sens actif)."""
+        t = split_cfg.get("target")
+        if t is not None:
+            try:
+                return float(t)
+            except (TypeError, ValueError):
+                pass
+        if target_mode == HVACMode.COOL:
+            return p.seuil_fin_refroidissement
+        if target_mode == HVACMode.HEAT:
+            return p.seuil_fin_chauffage
+        return None
+
+    @staticmethod
+    def _room_reached_target(
+        room_temperature: float | None, target: float | None, target_mode: str
+    ) -> bool:
+        """True si la pièce a atteint la cible (→ relâchement) dans le sens actif."""
+        if room_temperature is None or target is None:
+            return False
+        if target_mode == HVACMode.COOL:
+            return room_temperature <= target
+        if target_mode == HVACMode.HEAT:
+            return room_temperature >= target
+        return False
+
+    def _emit_pendulum_per_split(
+        self, inp: ZoneInputs, target_mode: str, p: Profile
+    ) -> list[Command]:
+        """Pendule continu avec décision attaque/relâchement INDÉPENDANTE par split.
+
+        Chaque split compare la T° pièce à SA cible effective : tant qu'elle
+        n'est pas atteinte → attaque (consigne sous la sonde en cool) ; une fois
+        atteinte → relâchement (consigne au-dessus de la sonde → idle mais
+        allumé). Le set_hvac_mode reste groupé (direction commune). Le régime
+        zone affiché = ATTAQUE si au moins un split attaque, sinon maintien.
+        """
+        cmds: list[Command] = []
+        if inp.clim_current_hvac_mode != target_mode:
+            cmds.append(self._cmd_set_hvac_mode(target_mode))
+
+        any_attack = False
+        for entity_id in self._target_entities:
+            split_cfg = self.config.splits_config.get(entity_id, {})
+            split_power = split_cfg.get("power") or p.power
+            spp = POWER_PROFILES.get(split_power, POWER_PROFILES[DEFAULT_POWER])
+            anchor = inp.clim_internal_by_entity.get(entity_id)
+            target = self._split_effective_target(split_cfg, p, target_mode)
+
+            if self._room_reached_target(inp.room_temperature, target, target_mode):
+                offset = spp.get("release", 3.0)
+                sp = self._setpoint_release_for_split(anchor, offset, target_mode, inp)
+            else:
+                any_attack = True
+                offset = _offset_for_regime(Regime.ATTAQUE, spp)
+                sp = self._setpoint_for_split_anchor(anchor, offset, target_mode, inp)
+
+            if sp is not None and self._setpoint_should_send(sp, inp):
+                cmds.append(Command(
+                    "climate", "set_temperature",
+                    {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
+                ))
+                self.state.last_setpoint_sent = sp
+
+            swing = split_cfg.get("swing")
+            if swing:
+                cmds.append(Command(
+                    "climate", "set_swing_mode",
+                    {ATTR_ENTITY_ID: entity_id, ATTR_SWING_MODE: swing},
+                ))
+
+        self.state.regime = Regime.ATTAQUE if any_attack else Regime.STABILISATION
+        if cmds:
+            self.state.last_command_ts = inp.now_ts
+        return cmds
+
+    def _emit_release(
+        self, inp: ZoneInputs, target_mode: str, p: Profile
+    ) -> list[Command]:
+        """Émet la consigne de relâchement (consigne inversée = split idle actif).
+
+        Par split si splits_config non vide, sinon groupée. Le mode HVAC est
+        maintenu (pas de turn_off) mais la consigne est au-dessus de la sonde
+        en cool / en-dessous en heat pour que l'inverter ralentisse.
+        """
+        power_profile = POWER_PROFILES.get(p.power, POWER_PROFILES[DEFAULT_POWER])
+        cmds: list[Command] = []
+
+        # Mode HVAC inchangé (le split reste dans son sens)
+        if inp.clim_current_hvac_mode != target_mode:
+            cmds.append(self._cmd_set_hvac_mode(target_mode))
+
+        if self.config.splits_config:
+            # Consignes par split avec offset release propre à chaque puissance
+            for entity_id in self._target_entities:
+                split_cfg = self.config.splits_config.get(entity_id, {})
+                split_power = split_cfg.get("power") or p.power
+                spp = POWER_PROFILES.get(split_power, POWER_PROFILES[DEFAULT_POWER])
+                release_offset = spp.get("release", power_profile.get("release", 3.0))
+                anchor = inp.clim_internal_by_entity.get(entity_id)
+                sp = self._setpoint_release_for_split(anchor, release_offset, target_mode, inp)
+                if sp is not None and self._setpoint_should_send(sp, inp):
+                    cmds.append(Command(
+                        "climate", "set_temperature",
+                        {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
+                    ))
+                    self.state.last_setpoint_sent = sp
+                split_swing = split_cfg.get("swing")
+                if split_swing:
+                    cmds.append(Command(
+                        "climate", "set_swing_mode",
+                        {ATTR_ENTITY_ID: entity_id, ATTR_SWING_MODE: split_swing},
+                    ))
+        else:
+            release_offset = power_profile.get("release", 3.0)
+            setpoint = self._setpoint_release_offset(inp, release_offset, target_mode)
+            if setpoint is not None and self._setpoint_should_send(setpoint, inp):
+                cmds.append(self._cmd_set_temperature(setpoint))
+                self.state.last_setpoint_sent = setpoint
+
+        if cmds:
+            self.state.last_command_ts = inp.now_ts
+        return cmds
+
+    # --- Par split (splits_config non vide) ---
+
+    def _emit_per_split_setpoints(
+        self, inp: ZoneInputs, regime: str, target_mode: str, p: Profile
+    ) -> list[Command]:
+        """Consignes individuelles par split quand splits_config est renseigné.
+
+        Chaque split utilise sa propre sonde interne comme ancre (ou repli sur
+        la moyenne groupe si indisponible), sa propre puissance (ou héritage de
+        la zone), et envoie son propre swing si configuré.
+        Le set_hvac_mode reste groupé (direction commune) et est géré par
+        l'appelant (_emit_active). On n'émet ici QUE les températures et swings.
+        """
+        power_profile_zone = POWER_PROFILES.get(p.power, POWER_PROFILES[DEFAULT_POWER])
+        cmds: list[Command] = []
+        for entity_id in self._target_entities:
+            split_cfg = self.config.splits_config.get(entity_id, {})
+            # Puissance propre au split ou héritage zone
+            split_power = split_cfg.get("power") or p.power
+            split_pp = POWER_PROFILES.get(split_power, power_profile_zone)
+            offset = _offset_for_regime(regime, split_pp)
+            # Ancre interne propre au split (fournie par le coordinator)
+            anchor = inp.clim_internal_by_entity.get(entity_id)
+            sp = self._setpoint_for_split_anchor(anchor, offset, target_mode, inp)
+            if sp is not None and self._setpoint_should_send(sp, inp):
+                cmds.append(Command(
+                    "climate", "set_temperature",
+                    {ATTR_ENTITY_ID: entity_id, ATTR_TEMPERATURE: sp},
+                ))
+                self.state.last_setpoint_sent = sp
+            # Swing propre au split (remplace le windnice global)
+            swing = split_cfg.get("swing")
+            if swing:
+                cmds.append(Command(
+                    "climate", "set_swing_mode",
+                    {ATTR_ENTITY_ID: entity_id, ATTR_SWING_MODE: swing},
+                ))
+        return cmds
 
     def _setpoint_should_send(self, setpoint: float, inp: ZoneInputs) -> bool:
         """Rate-limit: don't re-emit setpoint if too close to current or too soon."""

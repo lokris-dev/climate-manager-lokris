@@ -117,9 +117,25 @@ def _zone_dict(
         "fan_intensity": "normal",
         # Boulot : la main prise par un collègue tient jusqu'au reset du matin.
         "override_until_reset": True,
+        # Paramètres par split (§3) : vide → héritage du niveau zone.
+        # À remplir via le service set_split ou la carte.
+        "splits_config": {},
     }
 
 
 def seed_zones() -> list[dict[str, Any]]:
     """Liste des 9 zones LOKRIS, prête à être stockée dans ConfigEntry.options."""
     return [_zone_dict(*z) for z in _ZONES]
+
+
+# Config système LOKRIS à fusionner dans ConfigEntry.data au setup initial.
+# pendulum_idle=True → régulation continue sans on/off (§1).
+# La protection hors-gel est désactivée par défaut (activable dans les options) ;
+# les seuils restent aux valeurs standards du bâtiment.
+SEED_SYSTEM: dict[str, Any] = {
+    "pendulum_idle": True,
+    "frost_protection_enabled": False,
+    "frost_min_temp": 8.0,
+    "frost_max_temp": 32.0,
+    "frost_duration_min": 120,
+}

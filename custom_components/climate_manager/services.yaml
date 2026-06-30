@@ -60,3 +60,61 @@ reset_daily:
   description: >-
     Remet toutes les zones au profil par défaut (Marche + Normal) et efface les
     overrides — équivalent du désarmement matinal de l'alarme.
+
+set_split:
+  name: Configurer un split
+  description: >-
+    Définit les paramètres propres à un split individuel dans une zone (§3).
+    Les clés non fournies restent inchangées. Une valeur null réinitialise
+    la clé (retour à l'héritage du niveau zone).
+  fields:
+    zone_id:
+      name: Zone ID
+      description: ID interne de la zone.
+      required: true
+      example: openspace
+      selector:
+        text:
+    climate_entity:
+      name: Entité split
+      description: entity_id du split à configurer (ex. climate.climatisation_stock).
+      required: true
+      example: climate.climatisation_stock
+      selector:
+        entity:
+          domain: climate
+    target:
+      name: Cible (°C)
+      description: >-
+        Point de confort de ce split. Le split attaque tant que la T° pièce
+        est au-delà de cette cible dans le sens actif. null = hériter de la zone.
+      required: false
+      example: 24.5
+      selector:
+        number:
+          min: 15
+          max: 32
+          step: 0.5
+          unit_of_measurement: "°C"
+    power:
+      name: Puissance
+      description: >-
+        Niveau de puissance (offsets) propre à ce split.
+        null = hériter du profil de zone.
+      required: false
+      example: normal
+      selector:
+        select:
+          options:
+            - doux
+            - normal
+            - agressif
+    swing:
+      name: Swing
+      description: >-
+        Mode de swing envoyé à CE split uniquement (ex. "off", "swing").
+        null = ne pas toucher au swing.
+      required: false
+      example: "off"
+      selector:
+        text:

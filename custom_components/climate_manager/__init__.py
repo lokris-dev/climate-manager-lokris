@@ -30,6 +30,7 @@ SERVICE_FORCE_START = "force_start"
 SERVICE_RELOAD_ZONES = "reload_zones"
 SERVICE_UPDATE_PROFILES = "update_profiles"
 SERVICE_RESET_DAILY = "reset_daily"
+SERVICE_SET_SPLIT = "set_split"
 
 SCHEMA_ZONE_ID = vol.Schema({vol.Required("zone_id"): cv.string})
 SCHEMA_SET_MODE = vol.Schema(
@@ -42,6 +43,15 @@ SCHEMA_UPDATE_PROFILES = vol.Schema(
     {
         vol.Required("zone_id"): cv.string,
         vol.Required("profiles"): [dict],
+    }
+)
+SCHEMA_SET_SPLIT = vol.Schema(
+    {
+        vol.Required("zone_id"): cv.string,
+        vol.Required("climate_entity"): cv.string,
+        vol.Optional("target"): vol.Any(None, vol.Coerce(float)),
+        vol.Optional("power"): vol.Any(None, cv.string),
+        vol.Optional("swing"): vol.Any(None, cv.string),
     }
 )
 
@@ -308,6 +318,24 @@ def _register_services(hass: HomeAssistant) -> None:
         coord.update_zone_profiles(zone.config.zone_id, call.data["profiles"])
         await coord.async_tick_now()
 
+    async def _set_split(call: ServiceCall) -> None:
+        """Met à jour les paramètres d'un split individuel et persiste la config."""
+        coord, zone = _find_zone(hass, call.data["zone_id"])
+        if zone is None:
+            _LOGGER.warning("set_split: zone %r not found", call.data["zone_id"])
+            return
+        data = call.data
+        kwargs: dict[str, Any] = {}
+        # On ne passe que les clés explicitement présentes dans l'appel service
+        if "target" in data:
+            kwargs["target"] = data["target"]
+        if "power" in data:
+            kwargs["power"] = data["power"]
+        if "swing" in data:
+            kwargs["swing"] = data["swing"]
+        coord.update_split_config(zone.config.zone_id, data["climate_entity"], **kwargs)
+        await coord.async_tick_now()
+
     hass.services.async_register(DOMAIN, SERVICE_SET_MODE, _set_mode, schema=SCHEMA_SET_MODE)
     hass.services.async_register(DOMAIN, SERVICE_FORCE_OFF, _force_off, schema=SCHEMA_ZONE_ID)
     hass.services.async_register(
@@ -322,13 +350,16 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_UPDATE_PROFILES, _update_profiles, schema=SCHEMA_UPDATE_PROFILES
     )
     hass.services.async_register(DOMAIN, SERVICE_RESET_DAILY, _reset_daily)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_SPLIT, _set_split, schema=SCHEMA_SET_SPLIT
+    )
 
 
 def _unregister_services(hass: HomeAssistant) -> None:
     for service in (
         SERVICE_SET_MODE, SERVICE_FORCE_OFF, SERVICE_RESET_OVERRIDE,
         SERVICE_BOOST, SERVICE_FORCE_START, SERVICE_RELOAD_ZONES,
-        SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY,
+        SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY, SERVICE_SET_SPLIT,
     ):
         hass.services.async_remove(DOMAIN, service)
 

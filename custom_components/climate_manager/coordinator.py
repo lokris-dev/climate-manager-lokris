@@ -21,9 +21,19 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     CONF_CONTROL_ENABLED,
+    CONF_FROST_DURATION_MIN,
+    CONF_FROST_MAX_TEMP,
+    CONF_FROST_MIN_TEMP,
+    CONF_FROST_PROTECTION_ENABLED,
+    CONF_PENDULUM_IDLE,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
     CONF_ZONES,
+    DEFAULT_FROST_DURATION_MIN,
+    DEFAULT_FROST_MAX_TEMP,
+    DEFAULT_FROST_MIN_TEMP,
+    DEFAULT_FROST_PROTECTION_ENABLED,
+    DEFAULT_PENDULUM_IDLE,
     DEFAULT_POWER,
     DEFAULT_SETPOINT_STEP,
     DOMAIN,
@@ -72,6 +82,9 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             hass, 1, f"{DOMAIN}_cycles_{entry.entry_id}"
         )
         self._last_runtime_payload: dict[str, Any] | None = None
+        # État du cycle hors-gel (§2). Persisté dans le runtime store.
+        self._frost_start_ts: float | None = None
+        self._frost_direction: str | None = None  # 'heat' | 'cool'
         self._rebuild_zones()
 
     # === Public API for platforms ===
@@ -169,6 +182,37 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         self._persist_zone_config(zone_id, profiles=[p.to_dict() for p in parsed])
         self.async_set_updated_data(self._build_coordinator_data())
 
+    def update_split_config(
+        self,
+        zone_id: str,
+        climate_entity: str,
+        *,
+        target: float | None = ...,  # type: ignore[assignment]
+        power: str | None = ...,      # type: ignore[assignment]
+        swing: str | None = ...,      # type: ignore[assignment]
+    ) -> None:
+        """Met à jour la config d'un split individuel dans une zone (§3).
+
+        Seules les clés explicitement fournies sont modifiées ; les autres
+        restent inchangées (None = hériter du niveau zone). Persiste dans
+        ConfigEntry.options → CONF_ZONES → zone → splits_config.
+        """
+        zone = self._zones.get(zone_id)
+        if not zone:
+            return
+        split_cfg: dict[str, Any] = dict(zone.config.splits_config.get(climate_entity, {}))
+        if target is not ...:
+            split_cfg["target"] = target
+        if power is not ...:
+            split_cfg["power"] = power
+        if swing is not ...:
+            split_cfg["swing"] = swing
+        zone.config.splits_config[climate_entity] = split_cfg
+        # Persiste : tout le splits_config de la zone dans options
+        new_sc = {k: dict(v) for k, v in zone.config.splits_config.items()}
+        self._persist_zone_config(zone_id, splits_config=new_sc)
+        self.async_set_updated_data(self._build_coordinator_data())
+
     async def async_tick_now(self) -> None:
         """Force an immediate tick (used after a service call)."""
         await self.async_request_refresh()
@@ -186,7 +230,14 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             # Aucune mutation d'état, aucune commande : la carte reflète juste
             # les températures et l'état réel des splits.
             return self._build_coordinator_data()
+        now = utc_now_ts()
+        # Évaluation du cycle hors-gel avant de ticker les zones
+        self._tick_frost(now)
         for zone in self._zones.values():
+            # Hors-gel : forcer la direction sur les zones qui se retrouveraient
+            # en IDLE / SCHEDULE_OFF alors que le cycle doit les maintenir actives.
+            if self._frost_active():
+                self._ensure_frost_direction(zone, now)
             inputs = self._gather_inputs(zone)
             commands = zone.tick(inputs)
             for cmd in commands:
@@ -210,6 +261,10 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 restored = ZoneRuntimeState.from_dict(zones_data.get(zid))
                 # Keep the fresh ZoneConfig, restore only runtime.
                 zone.state = restored
+            # Restore frost state if present in the payload
+            frost_data = data.get("frost") or {}
+            self._frost_start_ts = _as_float(frost_data.get("start_ts"))
+            self._frost_direction = frost_data.get("direction")
             self._last_runtime_payload = self._runtime_payload()
             return
 
@@ -227,7 +282,12 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
 
     def _runtime_payload(self) -> dict[str, Any]:
         return {
-            "zones": {zid: zone.state.to_dict() for zid, zone in self._zones.items()}
+            "zones": {zid: zone.state.to_dict() for zid, zone in self._zones.items()},
+            # Cycle hors-gel (§2) — persisté pour survivre aux restarts HA.
+            "frost": {
+                "start_ts": self._frost_start_ts,
+                "direction": self._frost_direction,
+            },
         }
 
     async def _save_runtime_state_if_changed(self) -> None:
@@ -244,11 +304,20 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
     # === Zone setup / rebuild ===
 
     def _rebuild_zones(self) -> None:
-        """(Re)build zones from ConfigEntry.options['zones']."""
+        """(Re)build zones from ConfigEntry.options['zones'].
+
+        Le flag pendulum_idle est système (entry.data) : on le propage à tous
+        les ZoneConfig reconstruits pour que la logique Zone puisse le lire
+        directement sans remonter au coordinator à chaque tick.
+        """
+        pendulum_idle = bool(
+            self.entry.data.get(CONF_PENDULUM_IDLE, DEFAULT_PENDULUM_IDLE)
+        )
         zones_cfg = self.entry.options.get(CONF_ZONES, [])
         new_zones: dict[str, Zone] = {}
         for cfg_dict in zones_cfg:
             zc = ZoneConfig.from_dict(cfg_dict)
+            zc.pendulum_idle = pendulum_idle  # flag système → toutes les zones
             existing = self._zones.get(zc.zone_id)
             new_zones[zc.zone_id] = Zone(
                 zc, state=existing.state if existing else ZoneRuntimeState()
@@ -489,6 +558,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         splits = zone.config.climate_entities or [zone.config.climate_entity]
 
         internals: list[float] = []
+        internals_by_entity: dict[str, float] = {}
         setpoints: list[float] = []
         modes: list[str] = []
         fans: set[Any] = set()
@@ -511,6 +581,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             it = _as_float(attrs.get(ATTR_CURRENT_TEMPERATURE))
             if it is not None:
                 internals.append(it)
+                internals_by_entity[ent] = it  # sonde par split pour §3
             sp = _as_float(attrs.get(ATTR_TEMPERATURE))
             if sp is not None:
                 setpoints.append(sp)
@@ -540,7 +611,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         active_profile = self._active_profile(zone)
         # Gating boulot : le système n'est actif que lorsque l'alarme est
         # désarmée (bâtiment occupé). Armée → schedule_off → splits coupés.
-        system_enabled = not self._house_is_absent()
+        # Exception : cycle hors-gel (§2) → system_enabled forcé à True.
+        system_enabled = not self._house_is_absent() or self._frost_active()
         return ZoneInputs(
             now_ts=now,
             room_temperature=room_temperature,
@@ -560,6 +632,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             active_profile=active_profile,
             clim_internal_temperatures=tuple(internals),
             clim_setpoint_step=clim_setpoint_step,
+            clim_internal_by_entity=internals_by_entity,
         )
 
     def _average_temperature(self, sensors: list[str]) -> float | None:
@@ -615,6 +688,104 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 open_n += 1
         return open_n, total
 
+    # === Protection hors-gel (§2) ===
+
+    def _frost_protection_enabled(self) -> bool:
+        return bool(self.entry.data.get(CONF_FROST_PROTECTION_ENABLED, DEFAULT_FROST_PROTECTION_ENABLED))
+
+    def _frost_min_temp(self) -> float:
+        return float(self.entry.data.get(CONF_FROST_MIN_TEMP, DEFAULT_FROST_MIN_TEMP))
+
+    def _frost_max_temp(self) -> float:
+        return float(self.entry.data.get(CONF_FROST_MAX_TEMP, DEFAULT_FROST_MAX_TEMP))
+
+    def _frost_duration_min(self) -> int:
+        return int(self.entry.data.get(CONF_FROST_DURATION_MIN, DEFAULT_FROST_DURATION_MIN))
+
+    def _frost_active(self) -> bool:
+        """True si un cycle hors-gel est en cours (démarré et non expiré)."""
+        return self._frost_start_ts is not None
+
+    def _tick_frost(self, now: float) -> None:
+        """Évalue le déclenchement / l'arrêt du cycle hors-gel à chaque tick.
+
+        - Si un cycle est en cours et sa durée fixe est écoulée → arrêt.
+        - Si aucun cycle et conditions remplies (bâtiment absent + frost activé
+          + T° moyenne hors bornes) → démarrage.
+        """
+        if not self._frost_protection_enabled():
+            if self._frost_active():
+                self._end_frost_cycle()
+            return
+
+        if not self._house_is_absent():
+            # Bâtiment occupé → pas de hors-gel (la régulation normale prend le relais)
+            if self._frost_active():
+                self._end_frost_cycle()
+            return
+
+        # Vérifier fin de cycle en cours
+        if self._frost_start_ts is not None:
+            elapsed = now - self._frost_start_ts
+            if elapsed >= self._frost_duration_min() * 60:
+                _LOGGER.info("Hors-gel : cycle terminé après %d min", self._frost_duration_min())
+                self._end_frost_cycle()
+            return  # cycle en cours, rien à déclencher
+
+        # Vérifier déclenchement sur T° bâtiment
+        avg = self._building_avg_temperature()
+        if avg is None:
+            return
+        if avg <= self._frost_min_temp():
+            _LOGGER.info(
+                "Hors-gel : T° bâtiment %.1f°C ≤ seuil %.1f°C → chauffage",
+                avg, self._frost_min_temp(),
+            )
+            self._start_frost_cycle("heat", now)
+        elif avg >= self._frost_max_temp():
+            _LOGGER.info(
+                "Hors-gel : T° bâtiment %.1f°C ≥ seuil %.1f°C → refroidissement",
+                avg, self._frost_max_temp(),
+            )
+            self._start_frost_cycle("cool", now)
+
+    def _start_frost_cycle(self, direction: str, now: float) -> None:
+        self._frost_start_ts = now
+        self._frost_direction = direction
+
+    def _end_frost_cycle(self) -> None:
+        self._frost_start_ts = None
+        self._frost_direction = None
+
+    def _ensure_frost_direction(self, zone: Zone, now: float) -> None:
+        """Pendant le hors-gel, s'assurer que la zone va s'activer dans la bonne direction.
+
+        On appelle force_start() seulement si la zone est dans un état passif
+        (IDLE, SCHEDULE_OFF, COOLDOWN, WINDOW_OPEN) pour ne pas interrompre un
+        cycle actif déjà dans le bon sens.
+
+        Note : _frost_direction est 'heat' ou 'cool' — correspond directement
+        aux valeurs HVACMode (chaînes identiques) → on passe la chaîne brute.
+        """
+        direction = self._frost_direction
+        if direction is None:
+            return
+        passive_states = (
+            ZoneState.IDLE, ZoneState.SCHEDULE_OFF,
+            ZoneState.COOLDOWN, ZoneState.WINDOW_OPEN,
+        )
+        if zone.state.state in passive_states:
+            zone.force_start(direction, now)
+
+    def _building_avg_temperature(self) -> float | None:
+        """Température moyenne de toutes les sondes de pièce de toutes les zones."""
+        all_sensors: list[str] = []
+        for zone in self._zones.values():
+            all_sensors.extend(zone.config.temperature_sensors)
+        if not all_sensors:
+            return None
+        return self._average_temperature(all_sensors)
+
     def _house_is_absent(self) -> bool:
         ent = self.entry.data.get(CONF_PRESENCE_ENTITY)
         absent_states = self.entry.data.get(CONF_PRESENCE_ABSENT_STATES, [])
@@ -640,7 +811,23 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
     # === Data exposed to platforms ===
 
     def _build_coordinator_data(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"zones": {}}
+        # Données système : frost
+        frost_ends_ts: float | None = None
+        if self._frost_start_ts is not None:
+            frost_ends_ts = self._frost_start_ts + self._frost_duration_min() * 60
+        out: dict[str, Any] = {
+            "zones": {},
+            "frost": {
+                "active": self._frost_active(),
+                "direction": self._frost_direction,
+                "start_ts": self._frost_start_ts,
+                "ends_ts": frost_ends_ts,
+                "enabled": self._frost_protection_enabled(),
+                "min_temp": self._frost_min_temp(),
+                "max_temp": self._frost_max_temp(),
+                "duration_min": self._frost_duration_min(),
+            },
+        }
         for zid, zone in self._zones.items():
             inputs = self._gather_inputs(zone)
             # Derived: when we entered the current state, and (for timed states)
@@ -719,8 +906,70 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 # Historical cycles for §5 of the card. List of dicts, newest
                 # at the end; coordinator persists across HA restarts.
                 "cycle_history": zone.state.completed_cycles,
+                # Données par split pour la carte (§3). Pour chaque split de
+                # la zone, expose les paramètres actuels + hérités + état clim.
+                "splits": self._build_splits_data(zone, inputs),
+                # Direction pendule verrouillée (§1)
+                "active_direction": zone.state.active_direction,
             }
         return out
+
+    def _build_splits_data(self, zone: Zone, inputs: ZoneInputs) -> list[dict[str, Any]]:
+        """Données par split exposées à la carte pour l'affichage et l'édition.
+
+        Format :
+        {
+            entity_id: str,
+            name: str,            # simplifié depuis l'entity_id
+            internal_temp: float|None,
+            current_setpoint: float|None,
+            current_swing: str|None,
+            hvac_mode: str,       # état hvac réel de CE split
+            # Paramètres configurés (None = hérité du niveau zone)
+            target: float|None,
+            power: str|None,
+            swing: str|None,
+        }
+        """
+        splits_data: list[dict[str, Any]] = []
+        splits = zone.config.climate_entities or [zone.config.climate_entity]
+        active = inputs.active_profile or (zone.config.profiles[0] if zone.config.profiles else None)
+
+        for ent in splits:
+            st = self.hass.states.get(ent)
+            split_cfg = zone.config.splits_config.get(ent, {})
+            attrs = st.attributes if st else {}
+
+            # Nom court : dernier segment du entity_id après le point, sans le préfixe domaine
+            short_name = ent.split(".")[-1] if "." in ent else ent
+
+            internal_temp = inputs.clim_internal_by_entity.get(ent)
+            current_sp = _as_float(attrs.get(ATTR_TEMPERATURE)) if attrs else None
+            current_swing = attrs.get(ATTR_SWING_MODE) if attrs else None
+            hvac_mode = st.state if st else "unavailable"
+
+            # target héritée : seuil_fin du sens actif du profil si non défini
+            inherited_target: float | None = None
+            if active:
+                dir_ = zone.state.active_direction or inputs.clim_current_hvac_mode
+                if dir_ == "cool":
+                    inherited_target = active.seuil_fin_refroidissement
+                elif dir_ == "heat":
+                    inherited_target = active.seuil_fin_chauffage
+
+            splits_data.append({
+                "entity_id": ent,
+                "name": short_name,
+                "internal_temp": internal_temp,
+                "current_setpoint": current_sp,
+                "current_swing": current_swing,
+                "hvac_mode": hvac_mode,
+                "target": split_cfg.get("target"),          # None = hérité
+                "power": split_cfg.get("power"),            # None = hérité
+                "swing": split_cfg.get("swing"),            # None = hérité
+                "effective_target": split_cfg.get("target") if split_cfg.get("target") is not None else inherited_target,
+            })
+        return splits_data
 
 
 def _as_float(value: Any) -> float | None:

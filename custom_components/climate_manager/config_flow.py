@@ -31,7 +31,12 @@ from .const import (
     CONF_CONTROL_ENABLED,
     CONF_DUREE_COOLDOWN_MIN,
     CONF_DUREE_STABILISATION_MIN,
+    CONF_FROST_DURATION_MIN,
+    CONF_FROST_MAX_TEMP,
+    CONF_FROST_MIN_TEMP,
+    CONF_FROST_PROTECTION_ENABLED,
     CONF_OVERRIDE_DUREE_MIN,
+    CONF_PENDULUM_IDLE,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
     CONF_TEMPERATURE_SENSORS,
@@ -41,7 +46,12 @@ from .const import (
     CONF_ZONES,
     DEFAULT_DUREE_COOLDOWN_MIN,
     DEFAULT_DUREE_STABILISATION_MIN,
+    DEFAULT_FROST_DURATION_MIN,
+    DEFAULT_FROST_MAX_TEMP,
+    DEFAULT_FROST_MIN_TEMP,
+    DEFAULT_FROST_PROTECTION_ENABLED,
     DEFAULT_OVERRIDE_DUREE_MIN,
+    DEFAULT_PENDULUM_IDLE,
     DOMAIN,
     MAX_DUREE_MIN,
     MAX_OVERRIDE_DUREE_MIN,
@@ -188,11 +198,12 @@ class DelormejClimateConfigFlow(ConfigFlow, domain=DOMAIN):
         # control_enabled=False → on démarre en OBSERVATION (rien n'est piloté)
         # pour voir le rendu d'abord ; on active le pilotage via l'interrupteur
         # maître quand on est prêt.
-        from .seed import SEED_PRESENCE, seed_zones
+        # SEED_SYSTEM : pendulum_idle=True + valeurs frost de référence.
+        from .seed import SEED_PRESENCE, SEED_SYSTEM, seed_zones
 
         return self.async_create_entry(
             title="Climate Manager — LOKRIS",
-            data={**SEED_PRESENCE, CONF_CONTROL_ENABLED: False},
+            data={**SEED_PRESENCE, **SEED_SYSTEM, CONF_CONTROL_ENABLED: False},
             options={CONF_ZONES: seed_zones()},
         )
 
@@ -217,7 +228,7 @@ class DelormejClimateOptionsFlow(OptionsFlow):
         menu = ["add_zone"]
         if zones:
             menu += ["edit_zone", "remove_zone"]
-        menu.append("presence")
+        menu += ["presence", "system"]
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     # --- presence (now optional, post-install only) ---
@@ -234,6 +245,54 @@ class DelormejClimateOptionsFlow(OptionsFlow):
         # coordinator falls back to "presence unknown".
         clean = {k: v for k, v in user_input.items() if v not in (None, "", [])}
         self.hass.config_entries.async_update_entry(self._entry, data=clean)
+        return self.async_create_entry(title="", data=self._entry.options)
+
+    # --- paramètres système (pendule + hors-gel) ---
+
+    async def async_step_system(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Options système : pendulum_idle + protection hors-gel.
+
+        Ces paramètres sont stockés dans ConfigEntry.data (niveau système,
+        pas par zone) et ne sont pas exposés dans la carte Lovelace — ils
+        sont réservés à l'administrateur.
+        """
+        if user_input is None:
+            current = dict(self._entry.data)
+            schema = vol.Schema({
+                vol.Optional(
+                    CONF_PENDULUM_IDLE,
+                    default=current.get(CONF_PENDULUM_IDLE, DEFAULT_PENDULUM_IDLE),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_FROST_PROTECTION_ENABLED,
+                    default=current.get(CONF_FROST_PROTECTION_ENABLED, DEFAULT_FROST_PROTECTION_ENABLED),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_FROST_MIN_TEMP,
+                    default=current.get(CONF_FROST_MIN_TEMP, DEFAULT_FROST_MIN_TEMP),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0.0, max=15.0, step=0.5, unit_of_measurement="°C")
+                ),
+                vol.Optional(
+                    CONF_FROST_MAX_TEMP,
+                    default=current.get(CONF_FROST_MAX_TEMP, DEFAULT_FROST_MAX_TEMP),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=25.0, max=40.0, step=0.5, unit_of_measurement="°C")
+                ),
+                vol.Optional(
+                    CONF_FROST_DURATION_MIN,
+                    default=current.get(CONF_FROST_DURATION_MIN, DEFAULT_FROST_DURATION_MIN),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=10, max=480, step=10, unit_of_measurement="min")
+                ),
+            })
+            return self.async_show_form(step_id="system", data_schema=schema)
+
+        # Fusionne dans entry.data (préserve les clés existantes comme présence)
+        new_data = {**self._entry.data, **user_input}
+        self.hass.config_entries.async_update_entry(self._entry, data=new_data)
         return self.async_create_entry(title="", data=self._entry.options)
 
     # --- add zone ---
