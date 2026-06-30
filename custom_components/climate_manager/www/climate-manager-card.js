@@ -35,9 +35,12 @@ const C = {
 
 const STYLES = `
   .cm-root { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-  .cm-root:has(.cm-embedded) { padding: 6px; }
-  .cm-embedded { display: flex; flex-direction: column; gap: 10px; }
-  .cm-embedded .cm-zone { margin: 0; }
+  /* Mode intégré (zone:) — le ha-card EST la carte ; le .cm-zone ne doit pas
+     ajouter sa propre bordure/fond (sinon double cadre). */
+  .cm-root:has(.cm-embedded) { padding: 0; }
+  .cm-embedded { display: flex; flex-direction: column; gap: 0; }
+  .cm-embedded .cm-zone { margin: 0; border: none; border-radius: 0; background: transparent; }
+  .cm-embedded .cm-zone + .cm-zone { border-top: 1px solid var(--divider-color); }
   .cm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .cm-title { font-size: 1.3rem; font-weight: 600; }
   .cm-head-right { display: flex; align-items: center; gap: 8px; }
