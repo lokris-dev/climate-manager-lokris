@@ -72,6 +72,8 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             "windows_total": d.get("windows_total"),
             "profiles": d.get("profiles", []),
             "active_profile_name": d.get("active_profile_name"),
+            # Cible de zone (thermostat) — None = 4 seuils classiques.
+            "target_temp": d.get("target_temp"),
             # Contrôle par split (§3) : liste des splits avec cible/puissance/swing
             # configurés + état réel, pour les widgets par clim de la carte.
             "splits": d.get("splits", []),

@@ -44,7 +44,16 @@ from .const import (
     ZoneState,
 )
 from .context_tracker import ContextTracker
-from .zone import Command, Profile, Zone, ZoneConfig, ZoneInputs, ZoneRuntimeState, utc_now_ts
+from .zone import (
+    Command,
+    Profile,
+    Zone,
+    ZoneConfig,
+    ZoneInputs,
+    ZoneRuntimeState,
+    _apply_target_temp,
+    utc_now_ts,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -847,6 +856,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             # fallback to zone defaults if not (e.g. zone idle without a
             # matching profile, or transition gap).
             active = inputs.active_profile or zone.config.profiles[0]
+            # Seuils effectifs : dérivés de la cible de zone si elle est définie.
+            active = _apply_target_temp(active, zone.config.target_temp)
             clim_mode = inputs.clim_current_hvac_mode
             direction: str | None = None
             target_temperature: float | None = None
@@ -903,6 +914,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "active_profile_name": (
                     inputs.active_profile.name if inputs.active_profile else None
                 ),
+                # Cible de zone (thermostat) — None = 4 seuils classiques.
+                "target_temp": zone.config.target_temp,
                 # Historical cycles for §5 of the card. List of dicts, newest
                 # at the end; coordinator persists across HA restarts.
                 "cycle_history": zone.state.completed_cycles,
@@ -934,6 +947,9 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         splits_data: list[dict[str, Any]] = []
         splits = zone.config.climate_entities or [zone.config.climate_entity]
         active = inputs.active_profile or (zone.config.profiles[0] if zone.config.profiles else None)
+        # Seuils effectifs (dérivés de la cible de zone) pour l'héritage des splits.
+        if active is not None:
+            active = _apply_target_temp(active, zone.config.target_temp)
 
         for ent in splits:
             st = self.hass.states.get(ent)

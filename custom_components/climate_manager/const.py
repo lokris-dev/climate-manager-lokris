@@ -43,6 +43,11 @@ DEFAULT_FROST_MIN_TEMP = 8.0
 DEFAULT_FROST_MAX_TEMP = 32.0
 DEFAULT_FROST_DURATION_MIN = 120
 
+# Cible de zone (thermostat) : demi-bande d'hystérésis. La zone se stabilise à
+# target_temp, engage le froid au-dessus de target+bande, le chaud en-dessous
+# de target-bande. 1.0°C = réactif sans flip-flop (le pendule garde l'unité ON).
+DEFAULT_TARGET_DEADBAND = 1.0
+
 # Zone config keys
 CONF_ZONES = "zones"
 CONF_ZONE_ID = "id"

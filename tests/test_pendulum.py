@@ -866,3 +866,61 @@ class TestPendulumWithSplits:
         assert sp_b < 25.0, f"split_b (cible 22, pas atteinte) doit attaquer: {sp_b} < 25"
         # Au moins un split attaque → régime zone = ATTAQUE
         assert zone.state.regime == Regime.ATTAQUE
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# § Cible de zone (thermostat) — target_temp
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestZoneTarget:
+    """Une cible unique de zone dérive les 4 seuils."""
+
+    def test_apply_target_temp_derives_thresholds(self):
+        from custom_components.climate_manager.zone import Profile, _apply_target_temp
+        p = Profile(name="x")
+        d = _apply_target_temp(p, 24.0)
+        assert d.seuil_fin_refroidissement == 24.0
+        assert d.seuil_fin_chauffage == 24.0
+        assert d.seuil_debut_refroidissement == 25.0  # 24 + 1.0
+        assert d.seuil_debut_chauffage == 23.0        # 24 - 1.0
+        # None → profil inchangé
+        assert _apply_target_temp(p, None) is p
+
+    def test_zone_target_release_point_in_cool(self):
+        """Avec target_temp=24, la zone relâche dès que la pièce atteint 24."""
+        cfg = _pendulum_config(target_temp=24.0)
+        zone = Zone(cfg)
+        zone.state.state = ZoneState.RUNNING
+        zone.state.active_direction = HVAC_COOL
+        # pièce à 24 (= cible) → relâchement, consigne AU-DESSUS de la sonde
+        inp = _inp(
+            room_temperature=24.0,
+            clim_internal_temperature=24.0,
+            clim_internal_temperatures=(24.0,),
+            clim_current_hvac_mode=HVAC_COOL,
+            clim_setpoint_step=0.5,
+        )
+        cmds = zone.tick(inp)
+        # jamais de turn_off en pendule
+        assert not any(c.service == "turn_off" for c in cmds)
+        sp = _find_setpoint(cmds)
+        assert sp is not None and sp > 24.0, f"release: consigne {sp} doit être > sonde 24"
+        assert zone.state.regime == Regime.STABILISATION
+
+    def test_zone_target_attack_above_band(self):
+        """Pièce nettement au-dessus de la cible → attaque (consigne sous la sonde)."""
+        cfg = _pendulum_config(target_temp=24.0)
+        zone = Zone(cfg)
+        zone.state.state = ZoneState.RUNNING
+        zone.state.active_direction = HVAC_COOL
+        inp = _inp(
+            room_temperature=27.0,  # > 24 → pas encore à la cible
+            clim_internal_temperature=26.0,
+            clim_internal_temperatures=(26.0,),
+            clim_current_hvac_mode=HVAC_COOL,
+            clim_setpoint_step=0.5,
+        )
+        cmds = zone.tick(inp)
+        sp = _find_setpoint(cmds)
+        assert sp is not None and sp < 26.0, f"attaque: consigne {sp} doit être < sonde 26"
+        assert zone.state.regime == Regime.ATTAQUE

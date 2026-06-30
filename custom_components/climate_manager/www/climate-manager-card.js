@@ -119,6 +119,16 @@ const STYLES = `
   .cm-split-grid input[type="number"], .cm-split-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); padding: 5px 6px; font-size: .85rem; }
   .cm-seg-sm button { padding: 5px 3px; font-size: .74rem; }
   .cm-split[data-disabled] { opacity: .5; pointer-events: none; }
+
+  .cm-target { display: flex; align-items: center; gap: 8px; }
+  .cm-target .lbl { font-size: .8rem; color: var(--secondary-text-color); }
+  .cm-stepper { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--divider-color); border-radius: 8px; overflow: hidden; }
+  .cm-stepper button { border: none; cursor: pointer; background: var(--card-background-color); color: var(--primary-text-color); width: 30px; height: 30px; font-size: 1.1rem; line-height: 1; }
+  .cm-stepper button:hover { background: var(--secondary-background-color); }
+  .cm-stepper .val { min-width: 56px; text-align: center; font-weight: 700; font-size: .95rem; padding: 0 4px; }
+  .cm-target[disabled] { opacity: .45; pointer-events: none; }
+  .cm-target .auto { font-size: .72rem; color: var(--primary-color); cursor: pointer; background: none; border: none; padding: 0; }
+  .cm-target .auto.muted { color: var(--secondary-text-color); cursor: default; }
 `;
 
 function esc(s) {
@@ -140,7 +150,11 @@ class ClimateManagerCard extends HTMLElement {
     // zone dans une pièce du dashboard.
     const zc = this._config.zone ?? this._config.zones;
     this._zoneFilter = zc == null ? null : (Array.isArray(zc) ? zc.map(String) : [String(zc)]);
-    this._embedded = !!this._zoneFilter;
+    // Mode `system: true` -> carte d'en-tête seule (statut système + actions +
+    // bannière hors-gel), sans aucune zone. Pour coiffer une colonne de widgets
+    // par zone sur le dashboard.
+    this._systemOnly = this._config.system === true;
+    this._embedded = !!this._zoneFilter && !this._systemOnly;
     // Réglages admin masqués par défaut en mode intégré (sauf show_settings: true).
     this._showSettings = this._embedded
       ? this._config.show_settings === true
@@ -235,6 +249,8 @@ class ClimateManagerCard extends HTMLElement {
         dir: a.direction || a.active_direction,
         regime: a.regime,
         activeDirection: a.active_direction,
+        targetTemp: a.target_temp ?? null,           // cible explicite (null = auto)
+        targetDisplay: a.target_temperature ?? null, // cible effective affichée
         frost: a.frost || null,
         inOverride: !!a.in_override,
         overrideUntilReset: !!a.override_until_reset,
@@ -269,7 +285,10 @@ class ClimateManagerCard extends HTMLElement {
 
   _update() {
     let zones = this._zones();
-    if (this._zoneFilter) zones = zones.filter((z) => this._zoneFilter.includes(String(z.id)));
+    // En mode system, on garde toutes les zones (statut/frost global).
+    if (this._zoneFilter && !this._systemOnly) {
+      zones = zones.filter((z) => this._zoneFilter.includes(String(z.id)));
+    }
     if (!zones.length) {
       this._body.innerHTML = this._embedded
         ? `<div class="cm-empty">Zone introuvable.</div>`
@@ -312,6 +331,12 @@ class ClimateManagerCard extends HTMLElement {
             <button class="cm-reset" data-act="reset-daily" title="Remet toutes les zones en Marche + Normal">↻ Réinitialiser</button>
           </div>
         </div>`;
+    }
+
+    // Mode system : en-tête + bannière hors-gel seuls (coiffe les widgets/zone).
+    if (this._systemOnly) {
+      this._body.innerHTML = `${head}${this._frostBanner(zones)}`;
+      return;
     }
 
     this._body.innerHTML = `
@@ -384,6 +409,7 @@ class ClimateManagerCard extends HTMLElement {
           <div class="cm-z-temp">${fmtTemp(z.roomTemp)}<small>°C</small></div>
         </div>
         <span class="cm-badge" style="background:${meta.color}">${esc(meta.label)}${z.windowsOpen ? " · fenêtre" : ""}</span>
+        ${this._targetHtml(z, observe)}
         <div class="cm-row">
           <button class="cm-onoff ${z.on ? "is-on" : "is-off"}" data-act="toggle" data-entity="${esc(z.eids.sw)}" ${dis}>${z.on ? "Marche" : "Arrêt"}</button>
           <div class="cm-seg" ${z.on && !observe ? "" : "disabled"}>${seg}</div>
@@ -392,6 +418,27 @@ class ClimateManagerCard extends HTMLElement {
         ${sentTxt}
         ${this._splitsHtml(z, observe)}
         ${settings}
+      </div>`;
+  }
+
+  _targetHtml(z, observe) {
+    // Valeur de base du stepper : la cible explicite si définie, sinon la cible
+    // effective affichée (dérivée des seuils), sinon 24.
+    const base = z.targetTemp != null ? z.targetTemp : (z.targetDisplay != null ? z.targetDisplay : 24);
+    const isExplicit = z.targetTemp != null;
+    const dis = observe ? "disabled" : "";
+    const autoBtn = isExplicit
+      ? `<button class="auto" data-act="zone-target-auto" data-zone="${esc(z.id)}" title="Revenir aux seuils automatiques">auto</button>`
+      : `<span class="auto muted" title="Cible automatique (dérivée des seuils)">auto</span>`;
+    return `
+      <div class="cm-target" ${dis}>
+        <span class="lbl">Cible</span>
+        <div class="cm-stepper">
+          <button data-act="zone-target-dec" data-zone="${esc(z.id)}" data-val="${esc(base)}">−</button>
+          <span class="val">${fmtTemp(base)}°</span>
+          <button data-act="zone-target-inc" data-zone="${esc(z.id)}" data-val="${esc(base)}">+</button>
+        </div>
+        ${autoBtn}
       </div>`;
   }
 
@@ -559,6 +606,22 @@ class ClimateManagerCard extends HTMLElement {
           zone_id: el.dataset.zone,
           climate_entity: ent,
           power: el.dataset.opt || null,   // "" → null = hérite de la zone
+        });
+        break;
+      case "zone-target-dec":
+      case "zone-target-inc": {
+        const cur = parseFloat(el.dataset.val);
+        if (!Number.isFinite(cur)) break;
+        const step = act === "zone-target-inc" ? 0.5 : -0.5;
+        const next = Math.min(30, Math.max(16, Math.round((cur + step) * 2) / 2));
+        this._call("climate_manager", "set_zone_target", {
+          zone_id: el.dataset.zone, target_temp: next,
+        });
+        break;
+      }
+      case "zone-target-auto":
+        this._call("climate_manager", "set_zone_target", {
+          zone_id: el.dataset.zone, target_temp: null,
         });
         break;
       case "resume":

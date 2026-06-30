@@ -31,6 +31,7 @@ SERVICE_RELOAD_ZONES = "reload_zones"
 SERVICE_UPDATE_PROFILES = "update_profiles"
 SERVICE_RESET_DAILY = "reset_daily"
 SERVICE_SET_SPLIT = "set_split"
+SERVICE_SET_ZONE_TARGET = "set_zone_target"
 
 SCHEMA_ZONE_ID = vol.Schema({vol.Required("zone_id"): cv.string})
 SCHEMA_SET_MODE = vol.Schema(
@@ -52,6 +53,13 @@ SCHEMA_SET_SPLIT = vol.Schema(
         vol.Optional("target"): vol.Any(None, vol.Coerce(float)),
         vol.Optional("power"): vol.Any(None, cv.string),
         vol.Optional("swing"): vol.Any(None, cv.string),
+    }
+)
+SCHEMA_SET_ZONE_TARGET = vol.Schema(
+    {
+        vol.Required("zone_id"): cv.string,
+        # null = réinitialise (retour aux 4 seuils classiques)
+        vol.Required("target_temp"): vol.Any(None, vol.Coerce(float)),
     }
 )
 
@@ -355,6 +363,15 @@ def _register_services(hass: HomeAssistant) -> None:
         coord.update_split_config(zone.config.zone_id, data["climate_entity"], **kwargs)
         await coord.async_tick_now()
 
+    async def _set_zone_target(call: ServiceCall) -> None:
+        """Définit (ou réinitialise) la température cible unique d'une zone."""
+        coord, zone = _find_zone(hass, call.data["zone_id"])
+        if zone is None:
+            _LOGGER.warning("set_zone_target: zone %r not found", call.data["zone_id"])
+            return
+        coord.update_zone_config(zone.config.zone_id, target_temp=call.data["target_temp"])
+        await coord.async_tick_now()
+
     hass.services.async_register(DOMAIN, SERVICE_SET_MODE, _set_mode, schema=SCHEMA_SET_MODE)
     hass.services.async_register(DOMAIN, SERVICE_FORCE_OFF, _force_off, schema=SCHEMA_ZONE_ID)
     hass.services.async_register(
@@ -372,6 +389,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_SET_SPLIT, _set_split, schema=SCHEMA_SET_SPLIT
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_ZONE_TARGET, _set_zone_target, schema=SCHEMA_SET_ZONE_TARGET
+    )
 
 
 def _unregister_services(hass: HomeAssistant) -> None:
@@ -379,6 +399,7 @@ def _unregister_services(hass: HomeAssistant) -> None:
         SERVICE_SET_MODE, SERVICE_FORCE_OFF, SERVICE_RESET_OVERRIDE,
         SERVICE_BOOST, SERVICE_FORCE_START, SERVICE_RELOAD_ZONES,
         SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY, SERVICE_SET_SPLIT,
+        SERVICE_SET_ZONE_TARGET,
     ):
         hass.services.async_remove(DOMAIN, service)
 

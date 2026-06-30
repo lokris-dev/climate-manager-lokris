@@ -118,3 +118,29 @@ set_split:
       example: "off"
       selector:
         text:
+
+set_zone_target:
+  name: Température cible de zone
+  description: >-
+    Définit la température cible unique d'une zone (thermostat). Les seuils
+    sont alors dérivés de cette cible (stabilisation à la cible, démarrage
+    froid au-dessus / chaud en-dessous). null = revenir aux 4 seuils classiques.
+  fields:
+    zone_id:
+      name: Zone ID
+      description: ID interne de la zone.
+      required: true
+      example: openspace
+      selector:
+        text:
+    target_temp:
+      name: Cible (°C)
+      description: Température cible de confort. null = réinitialise.
+      required: true
+      example: 24
+      selector:
+        number:
+          min: 16
+          max: 30
+          step: 0.5
+          unit_of_measurement: "°C"

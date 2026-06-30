@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_SEUIL_FIN_CHAUFFAGE,
     DEFAULT_SEUIL_FIN_REFROIDISSEMENT,
     DEFAULT_SWING_MODE,
+    DEFAULT_TARGET_DEADBAND,
     FAN_PROFILES,
     POWER_PROFILES,
     RATE_LIMIT_SECONDS,
@@ -338,6 +339,11 @@ class ZoneConfig:
     # Valeurs possibles par entrée : target (float|None), power (str|None), swing (str|None).
     # None = hériter du niveau zone. Vide = comportement inchangé (tests existants OK).
     splits_config: dict[str, dict] = field(default_factory=dict)
+    # Température cible UNIQUE de la zone (thermostat). Quand renseignée, elle
+    # dérive les seuils : la zone se stabilise/relâche à `target_temp` et engage
+    # le froid au-dessus de target+bande / le chaud en-dessous de target-bande.
+    # None = on garde les 4 seuils configurés (comportement historique).
+    target_temp: float | None = None
 
     def __post_init__(self) -> None:
         # Normalise le couple climate_entity / climate_entities pour que les deux
@@ -400,6 +406,11 @@ class ZoneConfig:
             profiles=profiles,
             pendulum_idle=bool(d.get("pendulum_idle", DEFAULT_PENDULUM_IDLE)),
             splits_config=dict(d.get("splits_config") or {}),
+            target_temp=(
+                float(d["target_temp"])
+                if d.get("target_temp") is not None
+                else None
+            ),
         )
 
 
@@ -774,8 +785,13 @@ class Zone:
         ZoneConfig.__post_init__ from legacy fields) when the coordinator has
         not resolved one — primarily the test path that builds ZoneInputs
         directly without going through the coordinator's cascade logic.
+
+        Si la zone a une `target_temp` (thermostat), on dérive les 4 seuils du
+        profil à partir d'elle pour que toute la logique (décision, pendule,
+        relâchement, héritage des splits) s'appuie sur la cible unique.
         """
-        return inp.active_profile or self.config.profiles[0]
+        prof = inp.active_profile or self.config.profiles[0]
+        return _apply_target_temp(prof, self.config.target_temp)
 
     def _decide(self, inp: ZoneInputs) -> None:
         """Pure decision logic (IDLE -> STARTING) based on room sensor + thresholds."""
@@ -1334,6 +1350,26 @@ class Zone:
             service="set_swing_mode",
             data={ATTR_ENTITY_ID: self._target_entities, ATTR_SWING_MODE: mode},
         )
+
+
+def _apply_target_temp(profile: Profile, target_temp: float | None) -> Profile:
+    """Dérive un profil dont les 4 seuils découlent d'une cible unique.
+
+    target_temp=None → profil inchangé (comportement historique 4 seuils).
+    Sinon : stabilisation/relâchement à `target_temp`, démarrage froid à
+    target+bande, démarrage chaud à target-bande. Le reste du profil
+    (puissance, ventilation, nom) est conservé tel quel.
+    """
+    if target_temp is None:
+        return profile
+    d = DEFAULT_TARGET_DEADBAND
+    return replace(
+        profile,
+        seuil_fin_refroidissement=target_temp,
+        seuil_fin_chauffage=target_temp,
+        seuil_debut_refroidissement=target_temp + d,
+        seuil_debut_chauffage=target_temp - d,
+    )
 
 
 def _offset_for_regime(regime: str, power_profile: dict) -> float:
