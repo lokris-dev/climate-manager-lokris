@@ -52,50 +52,40 @@ const STYLES = `
   .cm-go { cursor: pointer; border: none; background: ${C.stab}; color: #fff; font-weight: 600; border-radius: 8px; padding: 8px 14px; font-size: .86rem; white-space: nowrap; }
   .cm-go:hover { filter: brightness(1.08); }
 
-  .cm-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
-  .cm-zone { --accent: ${C.idle}; position: relative; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--divider-color)); border-radius: 18px; padding: 15px 16px 13px; display: flex; flex-direction: column; gap: 12px; overflow: hidden;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, var(--card-background-color)), var(--card-background-color) 58%);
-    box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 18px -12px color-mix(in srgb, var(--accent) 60%, transparent); }
-  .cm-zone::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
-  .cm-zone.off { --accent: ${C.off}; opacity: .72; }
+  .cm-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .cm-zone { border: 1px solid var(--divider-color); border-radius: 14px; padding: 14px 15px; background: var(--card-background-color); display: flex; flex-direction: column; gap: 12px; }
+  .cm-zone.off { opacity: .6; }
 
   .cm-z-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .cm-z-name { font-weight: 700; font-size: 1.08rem; line-height: 1.15; letter-spacing: -.01em; }
-  .cm-z-state { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 600; color: var(--accent); margin-top: 4px; }
-  .cm-z-state .cm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
-  .cm-z-temp { font-size: 2rem; font-weight: 700; line-height: .95; white-space: nowrap; letter-spacing: -.03em; }
-  .cm-z-temp small { font-size: .8rem; font-weight: 600; color: var(--secondary-text-color); margin-left: 1px; }
+  .cm-z-name { font-weight: 700; font-size: 1.05rem; line-height: 1.2; }
+  .cm-z-state { font-size: .78rem; color: var(--secondary-text-color); margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cm-z-temp { font-size: 1.85rem; font-weight: 700; line-height: .95; white-space: nowrap; letter-spacing: -.02em; }
+  .cm-z-temp small { font-size: .78rem; font-weight: 600; color: var(--secondary-text-color); margin-left: 1px; }
 
-  .cm-target { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: color-mix(in srgb, var(--accent) 7%, var(--secondary-background-color)); border-radius: 13px; padding: 8px 8px 8px 13px; }
-  .cm-target .lbl { font-size: .82rem; font-weight: 600; color: var(--secondary-text-color); }
-  .cm-target .right { display: flex; align-items: center; gap: 8px; }
-  .cm-stepper { display: inline-flex; align-items: center; background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 999px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-  .cm-stepper button { border: none; background: none; cursor: pointer; width: 34px; height: 34px; border-radius: 50%; font-size: 1.25rem; line-height: 1; color: var(--accent); font-weight: 700; display: flex; align-items: center; justify-content: center; }
-  .cm-stepper button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  .cm-stepper .val { min-width: 58px; text-align: center; font-weight: 700; font-size: 1.02rem; }
-  .cm-auto { font-size: .72rem; cursor: pointer; border: none; background: none; padding: 4px 6px; border-radius: 7px; color: var(--primary-color); font-weight: 600; }
-  .cm-auto:hover { background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
-  .cm-auto.on { cursor: default; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .cm-target { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .cm-target .lbl { font-size: .85rem; color: var(--secondary-text-color); }
+  .cm-target .right { display: flex; align-items: center; gap: 6px; }
+  .cm-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--divider-color); border-radius: 10px; overflow: hidden; }
+  .cm-stepper button { border: none; background: var(--card-background-color); cursor: pointer; width: 36px; font-size: 1.2rem; line-height: 1; color: var(--primary-text-color); }
+  .cm-stepper button:hover { background: var(--secondary-background-color); }
+  .cm-stepper .val { min-width: 56px; text-align: center; font-weight: 700; font-size: 1rem; padding: 7px 0; border-left: 1px solid var(--divider-color); border-right: 1px solid var(--divider-color); }
+  .cm-auto { font-size: .72rem; cursor: pointer; border: none; background: none; padding: 4px 4px; color: var(--primary-color); }
+  .cm-auto:hover { text-decoration: underline; }
+  .cm-auto.on { color: var(--secondary-text-color); cursor: default; }
   .cm-target[disabled] { opacity: .45; pointer-events: none; }
 
   .cm-row { display: flex; align-items: center; gap: 8px; }
-  .cm-onoff { flex: 0 0 auto; border: none; cursor: pointer; border-radius: 999px; padding: 8px 15px; font-weight: 700; font-size: .82rem; }
-  .cm-onoff.is-on { background: ${C.stab}; color: #fff; box-shadow: 0 2px 8px -2px ${C.stab}aa; }
+  .cm-onoff { flex: 0 0 auto; border: none; cursor: pointer; border-radius: 9px; padding: 7px 14px; font-weight: 600; font-size: .82rem; }
+  .cm-onoff.is-on { background: ${C.stab}; color: #fff; }
   .cm-onoff.is-off { background: var(--secondary-background-color); color: var(--secondary-text-color); }
-  .cm-onoff[disabled] { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  .cm-onoff[disabled] { opacity: .45; cursor: not-allowed; }
 
-  .cm-seg { display: inline-flex; flex: 1 1 auto; background: var(--secondary-background-color); border-radius: 999px; padding: 3px; gap: 2px; }
-  .cm-seg button { flex: 1; border: none; cursor: pointer; background: transparent; color: var(--secondary-text-color); padding: 6px 4px; font-size: .8rem; font-weight: 600; border-radius: 999px; transition: background .12s, color .12s; }
-  .cm-seg button:hover:not(.sel) { color: var(--primary-text-color); }
-  .cm-seg button.sel { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+  .cm-seg { display: inline-flex; flex: 1 1 auto; background: var(--secondary-background-color); border-radius: 9px; padding: 3px; gap: 2px; }
+  .cm-seg button { flex: 1; border: none; cursor: pointer; background: transparent; color: var(--secondary-text-color); padding: 6px 4px; font-size: .8rem; font-weight: 600; border-radius: 7px; }
+  .cm-seg button.sel { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .cm-seg[disabled] { opacity: .45; pointer-events: none; }
 
-  .cm-override { display: flex; align-items: center; gap: 8px; font-size: .76rem; background: color-mix(in srgb, ${C.override} 12%, transparent); border-radius: 9px; padding: 6px 10px; }
-  .cm-override .lbl { flex: 1; color: var(--primary-text-color); }
-  .cm-link { cursor: pointer; color: ${C.override}; text-decoration: none; border: none; background: none; font-size: .76rem; font-weight: 600; padding: 0; }
-
-  .cm-z-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .73rem; color: var(--secondary-text-color); border-top: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); padding-top: 9px; }
-  .cm-z-foot .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cm-link { cursor: pointer; color: var(--primary-color); border: none; background: none; font-size: .78rem; padding: 0; }
 
   details.cm-cfg { border-top: 1px dashed var(--divider-color); padding-top: 8px; }
   details.cm-cfg > summary { cursor: pointer; font-size: .8rem; color: var(--secondary-text-color); list-style: none; display: flex; align-items: center; gap: 6px; }
@@ -119,19 +109,19 @@ const STYLES = `
   .cm-frost b { font-weight: 700; }
   .cm-frost .cm-frost-when { color: var(--secondary-text-color); margin-left: auto; }
 
-  details.cm-splits { border-top: 1px dashed var(--divider-color); padding-top: 8px; }
-  details.cm-splits > summary { cursor: pointer; font-size: .8rem; color: var(--secondary-text-color); list-style: none; display: flex; align-items: center; gap: 6px; }
-  details.cm-splits > summary::-webkit-details-marker { display: none; }
-  details.cm-splits[open] > summary { color: var(--primary-text-color); margin-bottom: 8px; }
-  .cm-split { border: 1px solid var(--divider-color); border-radius: 9px; padding: 8px 9px; display: flex; flex-direction: column; gap: 7px; }
-  .cm-split + .cm-split { margin-top: 8px; }
-  .cm-split-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .cm-split-name { font-weight: 600; font-size: .9rem; }
-  .cm-split-meta { font-size: .74rem; color: var(--secondary-text-color); white-space: nowrap; }
-  .cm-split-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-  .cm-split-grid { display: grid; grid-template-columns: 78px 1fr; gap: 7px 9px; align-items: center; }
-  .cm-split-grid > label { font-size: .72rem; color: var(--secondary-text-color); }
-  .cm-split-grid input[type="number"], .cm-split-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); padding: 5px 6px; font-size: .85rem; }
+  details.cm-opt { border-top: 1px solid var(--divider-color); padding-top: 10px; }
+  details.cm-opt > summary { cursor: pointer; font-size: .78rem; color: var(--secondary-text-color); list-style: none; display: flex; align-items: center; gap: 6px; }
+  details.cm-opt > summary::-webkit-details-marker { display: none; }
+  details.cm-opt > summary::before { content: "›"; display: inline-block; transition: transform .15s; font-size: 1rem; }
+  details.cm-opt[open] > summary::before { transform: rotate(90deg); }
+  details.cm-opt[open] > summary { color: var(--primary-text-color); margin-bottom: 10px; }
+  .cm-split { display: grid; grid-template-columns: 76px 1fr; gap: 7px 10px; align-items: center; }
+  .cm-split + .cm-split { margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--divider-color); }
+  .cm-split .nm { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .cm-split .nm b { font-weight: 600; font-size: .86rem; }
+  .cm-split .nm .meta { font-size: .73rem; color: var(--secondary-text-color); white-space: nowrap; }
+  .cm-split > label { font-size: .76rem; color: var(--secondary-text-color); }
+  .cm-split input[type="number"], .cm-split select { width: 100%; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 7px; background: var(--card-background-color); color: var(--primary-text-color); padding: 6px 7px; font-size: .83rem; }
   .cm-seg-sm button { padding: 5px 3px; font-size: .74rem; }
   .cm-split[data-disabled] { opacity: .5; pointer-events: none; }
 `;
@@ -381,41 +371,32 @@ class ClimateManagerCard extends HTMLElement {
 
   _zoneHtml(z, observe) {
     const meta = this._stateMeta(z);
-    const splitLine = z.splits.length
-      ? z.splits
-          .map((s) => `${esc(s.name)}${Number.isFinite(parseFloat(s.temp)) ? " " + fmtTemp(s.temp) + "°" : ""}`)
-          .join(" · ")
-      : "—";
+    const dis = observe ? "disabled" : "";
     const seg = POWER_LEVELS.map(
       ([val, lbl]) =>
         `<button data-act="power" data-entity="${esc(z.eids.power)}" data-opt="${val}" class="${z.power === val ? "sel" : ""}">${lbl}</button>`
     ).join("");
 
-    const dis = observe ? "disabled" : "";
-    const override = z.inOverride
-      ? `<div class="cm-override">
-           <span class="lbl">✋ Pris en main ${z.overrideUntilReset ? "jusqu'au prochain reset" : this._untilTxt(z.overrideUntil)}</span>
-           ${z.eids.resetOverride ? `<button class="cm-link" data-act="resume" data-entity="${esc(z.eids.resetOverride)}" ${dis}>Reprendre auto</button>` : ""}
-         </div>`
-      : "";
+    // Statut sur UNE ligne : en prise en main, libellé + action « Reprendre auto »
+    // fusionnés (plus de bandeau séparé). Sinon, simple libellé d'état.
+    let status;
+    if (z.inOverride) {
+      const until = z.overrideUntilReset ? "jusqu'au reset" : this._untilTxt(z.overrideUntil);
+      const resume = z.eids.resetOverride
+        ? `· <button class="cm-link" data-act="resume" data-entity="${esc(z.eids.resetOverride)}" ${dis}>Reprendre auto</button>`
+        : "";
+      status = `✋ Pris en main ${esc(until)} ${resume}`;
+    } else {
+      status = `${esc(meta.label)}${z.windowsOpen ? " · fenêtre ouverte" : ""}`;
+    }
 
     const settings = this._showSettings ? this._settingsHtml(z) : "";
-    const sent = Number.isFinite(parseFloat(z.setpointSent))
-      ? `consigne ${fmtTemp(z.setpointSent)}°`
-      : "";
-    const footParts = [];
-    if (splitLine !== "—") footParts.push(`<span class="sub">${esc(splitLine)}</span>`);
-    if (sent) footParts.push(`<span>${sent}</span>`);
-    const foot = footParts.length
-      ? `<div class="cm-z-foot">${footParts.join("")}</div>`
-      : "";
-
     return `
-      <div class="cm-zone ${z.on ? "" : "off"}" style="--accent:${meta.color}">
+      <div class="cm-zone ${z.on ? "" : "off"}">
         <div class="cm-z-head">
           <div>
             <div class="cm-z-name">${esc(z.name)}</div>
-            <div class="cm-z-state"><span class="cm-dot"></span>${esc(meta.label)}${z.windowsOpen ? " · fenêtre ouverte" : ""}</div>
+            <div class="cm-z-state">${status}</div>
           </div>
           <div class="cm-z-temp">${fmtTemp(z.roomTemp)}<small>°C</small></div>
         </div>
@@ -424,16 +405,14 @@ class ClimateManagerCard extends HTMLElement {
           <button class="cm-onoff ${z.on ? "is-on" : "is-off"}" data-act="toggle" data-entity="${esc(z.eids.sw)}" ${dis}>${z.on ? "Marche" : "Arrêt"}</button>
           <div class="cm-seg" ${z.on && !observe ? "" : "disabled"}>${seg}</div>
         </div>
-        ${override}
-        ${foot}
-        ${this._splitsHtml(z, observe)}
+        ${this._optionsHtml(z, observe)}
         ${settings}
       </div>`;
   }
 
   _targetHtml(z, observe) {
-    // Valeur de base du stepper : la cible explicite si définie, sinon la cible
-    // effective affichée (dérivée des seuils), sinon 24.
+    // Valeur de base du stepper : cible explicite si définie, sinon cible
+    // effective (dérivée des seuils), sinon 24.
     const base = z.targetTemp != null ? z.targetTemp : (z.targetDisplay != null ? z.targetDisplay : 24);
     const isExplicit = z.targetTemp != null;
     const dis = observe ? "disabled" : "";
@@ -442,7 +421,7 @@ class ClimateManagerCard extends HTMLElement {
       : `<span class="cm-auto on" title="Cible automatique (suit les seuils)">auto</span>`;
     return `
       <div class="cm-target" ${dis}>
-        <span class="lbl">Température cible</span>
+        <span class="lbl">Cible</span>
         <div class="right">
           <div class="cm-stepper">
             <button data-act="zone-target-dec" data-zone="${esc(z.id)}" data-val="${esc(base)}">−</button>
@@ -454,54 +433,64 @@ class ClimateManagerCard extends HTMLElement {
       </div>`;
   }
 
-  _splitsHtml(z, observe) {
+  // Panneau « Options » repliable : par-clim complet UNIQUEMENT pour les zones
+  // multi-splits (où cible/puissance peuvent différer d'un split à l'autre). En
+  // mono-split, cible et puissance sont déjà au niveau zone → on n'expose que le
+  // balayage (rien de redondant).
+  _optionsHtml(z, observe) {
     if (!z.splits.length) return "";
     const open = this._openSplits.has(z.id) ? "open" : "";
     const dis = observe ? 'data-disabled="1"' : "";
-    const rows = z.splits.map((s) => {
-      const powSeg = [["", "Auto"], ...POWER_LEVELS]
-        .map(
-          ([val, lbl]) =>
-            `<button data-act="split-power" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}" data-opt="${val}" class="${(s.power || "") === val ? "sel" : ""}">${lbl}</button>`
-        )
-        .join("");
-      const swingHtml =
-        s.swingModes && s.swingModes.length
-          ? `<select data-act="split-swing" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}">
-               <option value="">Auto</option>
-               ${s.swingModes
-                 .map((m) => `<option value="${esc(m)}" ${s.swing === m ? "selected" : ""}>${esc(m)}</option>`)
-                 .join("")}
-             </select>`
-          : `<span class="cm-note">non géré</span>`;
-      const mm = this._splitModeMeta(s);
-      const tgt = s.target != null ? s.target : "";
-      const ph = s.effectiveTarget != null ? `${fmtTemp(s.effectiveTarget)} (auto)` : "auto";
-      const sp = Number.isFinite(parseFloat(s.setpoint)) ? ` → ${fmtTemp(s.setpoint)}°` : "";
-      const it = Number.isFinite(parseFloat(s.temp)) ? ` · ${fmtTemp(s.temp)}°` : "";
-      return `
+    if (z.splits.length > 1) {
+      const rows = z.splits.map((s) => this._splitRow(z, s, dis)).join("");
+      return `<details class="cm-opt" ${open} data-zone="${esc(z.id)}">
+          <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Réglage par clim (${z.splits.length})</summary>
+          ${rows}
+        </details>`;
+    }
+    const s = z.splits[0];
+    if (!(s.swingModes && s.swingModes.length)) return "";  // rien de plus à régler
+    return `<details class="cm-opt" ${open} data-zone="${esc(z.id)}">
+        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Options</summary>
         <div class="cm-split" ${dis}>
-          <div class="cm-split-head">
-            <span class="cm-split-name">${esc(s.name)}</span>
-            <span class="cm-split-meta"><span class="cm-split-dot" style="background:${mm.color}"></span>${esc(mm.label)}${it}${sp}</span>
-          </div>
-          <div class="cm-split-grid">
-            <label>Cible °C</label>
-            <input type="number" step="0.5" min="16" max="32"
-              data-act="split-target" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}"
-              value="${esc(tgt)}" placeholder="${esc(ph)}">
-            <label>Puissance</label>
-            <div class="cm-seg cm-seg-sm">${powSeg}</div>
-            <label>Balayage</label>
-            ${swingHtml}
-          </div>
-        </div>`;
-    }).join("");
-    return `
-      <details class="cm-splits" ${open} data-zone="${esc(z.id)}">
-        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">🔧 Réglage par clim${z.splits.length > 1 ? " (" + z.splits.length + ")" : ""}</summary>
-        ${rows}
+          <label>Balayage</label>
+          ${this._swingSelect(z, s)}
+        </div>
       </details>`;
+  }
+
+  _splitRow(z, s, dis) {
+    const mm = this._splitModeMeta(s);
+    const it = Number.isFinite(parseFloat(s.temp)) ? `${fmtTemp(s.temp)}°` : "";
+    const sp = Number.isFinite(parseFloat(s.setpoint)) ? `→ ${fmtTemp(s.setpoint)}°` : "";
+    const powSeg = [["", "Auto"], ...POWER_LEVELS]
+      .map(
+        ([val, lbl]) =>
+          `<button data-act="split-power" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}" data-opt="${val}" class="${(s.power || "") === val ? "sel" : ""}">${lbl}</button>`
+      )
+      .join("");
+    const tgt = s.target != null ? s.target : "";
+    const ph = s.effectiveTarget != null ? `${fmtTemp(s.effectiveTarget)} (auto)` : "auto";
+    return `
+      <div class="cm-split" ${dis}>
+        <div class="nm"><b>${esc(s.name)}</b><span class="meta">${esc(mm.label)} ${it} ${sp}</span></div>
+        <label>Cible °C</label>
+        <input type="number" step="0.5" min="16" max="32"
+          data-act="split-target" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}"
+          value="${esc(tgt)}" placeholder="${esc(ph)}">
+        <label>Puissance</label>
+        <div class="cm-seg cm-seg-sm">${powSeg}</div>
+        <label>Balayage</label>
+        ${this._swingSelect(z, s)}
+      </div>`;
+  }
+
+  _swingSelect(z, s) {
+    if (!(s.swingModes && s.swingModes.length)) return `<span class="meta">non géré</span>`;
+    return `<select data-act="split-swing" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}">
+        <option value="">Auto</option>
+        ${s.swingModes.map((m) => `<option value="${esc(m)}" ${s.swing === m ? "selected" : ""}>${esc(m)}</option>`).join("")}
+      </select>`;
   }
 
   _splitModeMeta(s) {
@@ -696,7 +685,7 @@ class ClimateManagerCard extends HTMLElement {
       if (!d.classList) return;
       if (d.classList.contains("cm-cfg")) {
         this._onClickDetailsTrack(this._open, d.dataset.zone, d.open);
-      } else if (d.classList.contains("cm-splits")) {
+      } else if (d.classList.contains("cm-opt")) {
         this._onClickDetailsTrack(this._openSplits, d.dataset.zone, d.open);
       }
     }, true);
