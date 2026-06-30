@@ -110,6 +110,16 @@ def test_setpoint_noop_delta_boundary() -> None:
     assert _is_echo_of_intent(z, _st("cool", temperature=outside)) is False
 
 
+def test_unit_floor_rounding_within_one_step_is_echo() -> None:
+    # 2026-06-30 Hitachi cutover: an aggressive 18 command is floored by the
+    # unit to its effective min 19 and re-reported on a poll (fresh context).
+    # With a 1° step, that 1° gap must read as an echo, not a user override.
+    z = _zone(last_sp=18.0, last_hvac="cool")
+    assert _is_echo_of_intent(z, _st("cool", temperature=19, target_temp_step=1.0)) is True
+    # A genuine 2° change is still a divergence even with a 1° step.
+    assert _is_echo_of_intent(z, _st("cool", temperature=21, target_temp_step=1.0)) is False
+
+
 def test_off_intent_echoes_when_unit_off() -> None:
     # Zone intends OFF; an "off" re-emit (any context) must read as echo.
     z = _zone(last_sp=None, last_hvac="off")
@@ -194,6 +204,29 @@ async def test_polling_reemit_to_our_intent_does_not_trigger_override():
     )
     await asyncio.sleep(OVERRIDE_DEBOUNCE_SECONDS + 0.2)
     assert z.state.state == ZoneState.RUNNING, "Reaching our own intent is not an override"
+    await hass.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_unit_floor_rounding_does_not_trigger_override():
+    """End-to-end: a poll re-emitting the unit's floored setpoint (18→19, fresh
+    context, step 1.0) must keep the zone RUNNING, not bounce to override."""
+    from homeassistant.core import HomeAssistant
+    hass = HomeAssistant("/tmp")
+    coord = _make_coordinator(hass)
+    z = _zone(last_sp=18.0, last_hvac="cool")
+    z.state.state = ZoneState.RUNNING
+    coord._zones = {"z1": z}
+
+    coord._on_clim_state_changed(
+        _event(
+            "climate.z1",
+            _st("cool", temperature=18, target_temp_step=1.0),
+            _st("cool", temperature=19, target_temp_step=1.0),
+        )
+    )
+    await asyncio.sleep(OVERRIDE_DEBOUNCE_SECONDS + 0.2)
+    assert z.state.state == ZoneState.RUNNING, "Floor-rounding by one step is not an override"
     await hass.async_stop()
 
 

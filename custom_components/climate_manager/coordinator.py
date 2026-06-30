@@ -1062,7 +1062,14 @@ def _is_echo_of_intent(zone: Zone, new_state: Any) -> bool:
     # contente alors du mode + ventilo).
     if intent_mode != "off" and not zone.config.splits_config and intent_sp is not None:
         cur_sp = _as_float(attrs.get(ATTR_TEMPERATURE))
-        if cur_sp is None or abs(cur_sp - intent_sp) >= SETPOINT_NOOP_DELTA:
+        # Tolérance = un cran d'arrondi de l'unité. Certaines clims "plafonnent"
+        # une consigne d'attaque sous leur minimum effectif (ex. on commande 18,
+        # l'unité retient 19) et re-signalent cette valeur au polling avec un
+        # contexte neuf. Sans cette marge, ce simple arrondi matériel déclenchait
+        # un faux override (incident cutover Hitachi du 2026-06-30, plancher 19).
+        step = _as_float(attrs.get("target_temp_step")) or 0.0
+        sp_tol = step + SETPOINT_NOOP_DELTA if step > SETPOINT_NOOP_DELTA else SETPOINT_NOOP_DELTA
+        if cur_sp is None or abs(cur_sp - intent_sp) >= sp_tol:
             return False
     last_fan = st.last_fan_sent
     if last_fan is not None and attrs.get(ATTR_FAN_MODE) not in (None, last_fan):
