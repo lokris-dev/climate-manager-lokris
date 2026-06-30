@@ -924,3 +924,15 @@ class TestZoneTarget:
         sp = _find_setpoint(cmds)
         assert sp is not None and sp < 26.0, f"attaque: consigne {sp} doit être < sonde 26"
         assert zone.state.regime == Regime.ATTAQUE
+
+
+def test_daily_reset_clears_active_direction():
+    """Nouveau jour = direction pendule oubliée. Sinon une zone passée en
+    chauffage la veille (active_direction=heat) reste bloquée en heat et ne
+    peut pas refroidir le lendemain (incident cutover 2026-06-30, Baptiste)."""
+    zone = Zone(_pendulum_config())
+    zone.state.active_direction = HVAC_HEAT
+    zone.state.state = ZoneState.RUNNING
+    zone.daily_reset(1_000_000.0, default_power="normal")
+    assert zone.state.active_direction is None
+    assert zone.state.state == ZoneState.IDLE

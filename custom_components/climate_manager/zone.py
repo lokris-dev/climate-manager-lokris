@@ -667,6 +667,10 @@ class Zone:
         self.state.boost_until_ts = None
         self.state.override_until_ts = None
         self.state.forced_direction = None
+        # Nouveau jour = ardoise propre : on oublie la direction pendule verrouillée
+        # la veille (sinon une zone passée en chauffage hier reste bloquée en heat
+        # même quand il faut refroidir aujourd'hui).
+        self.state.active_direction = None
         if default_power is not None:
             self.config.power = default_power
             for p in self.config.profiles:
