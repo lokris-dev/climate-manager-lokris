@@ -59,6 +59,7 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             "any_window_open": d.get("any_window_open"),
             "house_is_absent": d.get("house_is_absent"),
             "in_override": d.get("in_override"),
+            "regime": d.get("regime"),
             "direction": d.get("direction"),
             "target_temperature": d.get("target_temperature"),
             "aggressivity": d.get("aggressivity"),
@@ -71,6 +72,14 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             "windows_total": d.get("windows_total"),
             "profiles": d.get("profiles", []),
             "active_profile_name": d.get("active_profile_name"),
+            # Contrôle par split (§3) : liste des splits avec cible/puissance/swing
+            # configurés + état réel, pour les widgets par clim de la carte.
+            "splits": d.get("splits", []),
+            # Direction pendule verrouillée (§1).
+            "active_direction": d.get("active_direction"),
+            # Statut système hors-gel (§2) — même valeur sur chaque zone, la carte
+            # le lit sur n'importe quelle zone pour afficher la bannière.
+            "frost": (self.coordinator.data or {}).get("frost"),
             "cycle_history": d.get("cycle_history", []),
             "last_completed_cycle": (
                 d.get("cycle_history")[-1] if d.get("cycle_history") else None

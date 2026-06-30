@@ -97,6 +97,28 @@ const STYLES = `
   .cm-note { font-size: .72rem; color: var(--secondary-text-color); }
 
   .cm-empty { padding: 18px; text-align: center; color: var(--secondary-text-color); }
+
+  .cm-frost { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-radius: 10px; padding: 9px 12px; font-size: .85rem; }
+  .cm-frost.heat { background: ${C.heat}1f; border: 1px solid ${C.heat}66; }
+  .cm-frost.cool { background: ${C.cool}1f; border: 1px solid ${C.cool}66; }
+  .cm-frost b { font-weight: 700; }
+  .cm-frost .cm-frost-when { color: var(--secondary-text-color); margin-left: auto; }
+
+  details.cm-splits { border-top: 1px dashed var(--divider-color); padding-top: 8px; }
+  details.cm-splits > summary { cursor: pointer; font-size: .8rem; color: var(--secondary-text-color); list-style: none; display: flex; align-items: center; gap: 6px; }
+  details.cm-splits > summary::-webkit-details-marker { display: none; }
+  details.cm-splits[open] > summary { color: var(--primary-text-color); margin-bottom: 8px; }
+  .cm-split { border: 1px solid var(--divider-color); border-radius: 9px; padding: 8px 9px; display: flex; flex-direction: column; gap: 7px; }
+  .cm-split + .cm-split { margin-top: 8px; }
+  .cm-split-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .cm-split-name { font-weight: 600; font-size: .9rem; }
+  .cm-split-meta { font-size: .74rem; color: var(--secondary-text-color); white-space: nowrap; }
+  .cm-split-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .cm-split-grid { display: grid; grid-template-columns: 78px 1fr; gap: 7px 9px; align-items: center; }
+  .cm-split-grid > label { font-size: .72rem; color: var(--secondary-text-color); }
+  .cm-split-grid input[type="number"], .cm-split-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); padding: 5px 6px; font-size: .85rem; }
+  .cm-seg-sm button { padding: 5px 3px; font-size: .74rem; }
+  .cm-split[data-disabled] { opacity: .5; pointer-events: none; }
 `;
 
 function esc(s) {
@@ -141,6 +163,7 @@ class ClimateManagerCard extends HTMLElement {
 
   _build() {
     if (!this._open) this._open = new Set();
+    if (!this._openSplits) this._openSplits = new Set();
     // Le custom element est inline par défaut -> il rétrécit au contenu dans une
     // cellule de grille (vue sections). On force le remplissage de la largeur.
     this.style.display = "block";
@@ -182,20 +205,37 @@ class ClimateManagerCard extends HTMLElement {
       if (!st) continue;
       const a = st.attributes || {};
       const sw = hass.states[k.zone_auto];
-      const splits = (a.climate_entities || []).map((cid) => {
+      // Splits enrichis (§3) : la liste vient du coordinator (a.splits) avec
+      // cible/puissance/swing configurés + état réel. Repli sur climate_entities.
+      const cfgSplits = Array.isArray(a.splits) ? a.splits : [];
+      const rawSplits = cfgSplits.length
+        ? cfgSplits
+        : (a.climate_entities || []).map((id) => ({ entity_id: id }));
+      const splits = rawSplits.map((s) => {
+        const cid = s.entity_id;
         const cs = hass.states[cid];
         return {
           id: cid,
-          name: cs?.attributes?.friendly_name || cid,
-          temp: cs?.attributes?.current_temperature,
-          mode: cs?.state,
+          name: cs?.attributes?.friendly_name || s.name || cid,
+          temp: s.internal_temp ?? cs?.attributes?.current_temperature,
+          mode: s.hvac_mode ?? cs?.state,
+          setpoint: s.current_setpoint ?? cs?.attributes?.temperature,
+          target: s.target ?? null,                       // null = hérité
+          effectiveTarget: s.effective_target ?? null,
+          power: s.power ?? null,                          // null = hérité
+          swing: s.swing ?? null,                          // null = ne pas toucher
+          currentSwing: s.current_swing ?? cs?.attributes?.swing_mode ?? null,
+          swingModes: cs?.attributes?.swing_modes || [],
         };
       });
       zones.push({
         id: a.zone_id || devId,
         name: a.zone_name || (hass.devices?.[devId]?.name || "Zone").replace(/^Climate Manager\s*[·-]\s*/i, ""),
         state: st.state,
-        dir: a.direction,
+        dir: a.direction || a.active_direction,
+        regime: a.regime,
+        activeDirection: a.active_direction,
+        frost: a.frost || null,
         inOverride: !!a.in_override,
         overrideUntilReset: !!a.override_until_reset,
         overrideUntil: hass.states[k.zone_override_until]?.state,
@@ -276,9 +316,26 @@ class ClimateManagerCard extends HTMLElement {
 
     this._body.innerHTML = `
       ${head}
+      ${this._frostBanner(zones)}
       <div class="cm-zones">${zones.map((z) => this._zoneHtml(z, observe)).join("")}</div>
-      <div class="cm-foot">Réglages structurels (ajout de zone, splits, capteurs) : <em>Paramètres → Appareils &amp; services → Climate Manager → Configurer</em>.</div>
+      <div class="cm-foot">Réglages structurels (zones, capteurs) et hors-gel : <em>Paramètres → Appareils &amp; services → Climate Manager → Configurer</em>.</div>
     `;
+  }
+
+  _frostBanner(zones) {
+    // Statut système hors-gel — même valeur sur chaque zone, on lit la 1ère.
+    const f = zones.find((z) => z.frost)?.frost;
+    if (!f || !f.active) return "";
+    const heat = f.direction === "heat";
+    const icon = heat ? "🔥" : "❄️";
+    const what = heat ? "Hors-gel — chauffage" : "Protection canicule — refroidissement";
+    const until = f.ends_ts
+      ? `jusqu'à ${new Date(f.ends_ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+      : "";
+    return `<div class="cm-frost ${heat ? "heat" : "cool"}">
+        <span>${icon} <b>${esc(what)}</b> — toutes les zones tournent (régulation pendule) car le bâtiment est fermé.</span>
+        <span class="cm-frost-when">${esc(until)}</span>
+      </div>`;
   }
 
   _controlSwitch() {
@@ -333,8 +390,71 @@ class ClimateManagerCard extends HTMLElement {
         </div>
         ${override}
         ${sentTxt}
+        ${this._splitsHtml(z, observe)}
         ${settings}
       </div>`;
+  }
+
+  _splitsHtml(z, observe) {
+    if (!z.splits.length) return "";
+    const open = this._openSplits.has(z.id) ? "open" : "";
+    const dis = observe ? 'data-disabled="1"' : "";
+    const rows = z.splits.map((s) => {
+      const powSeg = [["", "Auto"], ...POWER_LEVELS]
+        .map(
+          ([val, lbl]) =>
+            `<button data-act="split-power" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}" data-opt="${val}" class="${(s.power || "") === val ? "sel" : ""}">${lbl}</button>`
+        )
+        .join("");
+      const swingHtml =
+        s.swingModes && s.swingModes.length
+          ? `<select data-act="split-swing" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}">
+               <option value="">Auto</option>
+               ${s.swingModes
+                 .map((m) => `<option value="${esc(m)}" ${s.swing === m ? "selected" : ""}>${esc(m)}</option>`)
+                 .join("")}
+             </select>`
+          : `<span class="cm-note">non géré</span>`;
+      const mm = this._splitModeMeta(s);
+      const tgt = s.target != null ? s.target : "";
+      const ph = s.effectiveTarget != null ? `${fmtTemp(s.effectiveTarget)} (auto)` : "auto";
+      const sp = Number.isFinite(parseFloat(s.setpoint)) ? ` → ${fmtTemp(s.setpoint)}°` : "";
+      const it = Number.isFinite(parseFloat(s.temp)) ? ` · ${fmtTemp(s.temp)}°` : "";
+      return `
+        <div class="cm-split" ${dis}>
+          <div class="cm-split-head">
+            <span class="cm-split-name">${esc(s.name)}</span>
+            <span class="cm-split-meta"><span class="cm-split-dot" style="background:${mm.color}"></span>${esc(mm.label)}${it}${sp}</span>
+          </div>
+          <div class="cm-split-grid">
+            <label>Cible °C</label>
+            <input type="number" step="0.5" min="16" max="32"
+              data-act="split-target" data-zone="${esc(z.id)}" data-entity="${esc(s.id)}"
+              value="${esc(tgt)}" placeholder="${esc(ph)}">
+            <label>Puissance</label>
+            <div class="cm-seg cm-seg-sm">${powSeg}</div>
+            <label>Balayage</label>
+            ${swingHtml}
+          </div>
+        </div>`;
+    }).join("");
+    return `
+      <details class="cm-splits" ${open} data-zone="${esc(z.id)}">
+        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">🔧 Réglage par clim${z.splits.length > 1 ? " (" + z.splits.length + ")" : ""}</summary>
+        ${rows}
+      </details>`;
+  }
+
+  _splitModeMeta(s) {
+    switch (s.mode) {
+      case "cool": return { label: "Froid", color: C.cool };
+      case "heat": return { label: "Chaud", color: C.heat };
+      case "off": return { label: "Éteint", color: C.off };
+      case "fan_only": return { label: "Ventil.", color: C.idle };
+      case "dry": return { label: "Sec", color: C.idle };
+      case "unavailable": return { label: "Indispo", color: C.off };
+      default: return { label: s.mode || "—", color: C.idle };
+    }
   }
 
   _settingsHtml(z) {
@@ -379,10 +499,21 @@ class ClimateManagerCard extends HTMLElement {
     if (!z.on) return { label: "Éteint", color: C.off };
     switch (z.state) {
       case "starting":
-      case "running":
-        if (z.dir === "cool") return { label: z.state === "starting" ? "Démarrage ❄" : "Refroidit ❄", color: C.cool };
-        if (z.dir === "heat") return { label: z.state === "starting" ? "Démarrage 🔥" : "Chauffe 🔥", color: C.heat };
+      case "running": {
+        // Pendule : en relâchement (regime stabilisation), le split reste allumé
+        // mais idle → on l'affiche « Maintien » pour ne pas laisser croire qu'il
+        // turbine en permanence.
+        const maint = z.state === "running" && z.regime === "stabilisation";
+        if (z.dir === "cool")
+          return maint
+            ? { label: "Maintien ❄", color: C.stab }
+            : { label: z.state === "starting" ? "Démarrage ❄" : "Refroidit ❄", color: C.cool };
+        if (z.dir === "heat")
+          return maint
+            ? { label: "Maintien 🔥", color: C.stab }
+            : { label: z.state === "starting" ? "Démarrage 🔥" : "Chauffe 🔥", color: C.heat };
         return { label: "Actif", color: C.cool };
+      }
       case "stabilizing": return { label: "Stabilisation", color: C.stab };
       case "cooldown": return { label: "Repos", color: C.idle };
       case "idle": return { label: "En attente", color: C.idle };
@@ -410,8 +541,10 @@ class ClimateManagerCard extends HTMLElement {
     const el = e.target.closest("[data-act]");
     if (!el) return;
     const act = el.dataset.act;
-    // Laisse le comportement natif : ouverture <details> et clic dans les champs.
-    if (act === "toggle-cfg" || act === "number") return;
+    // Laisse le comportement natif : ouverture <details>, clic dans les champs
+    // (placement curseur input nombre, ouverture du select).
+    if (act === "toggle-cfg" || act === "toggle-splits" || act === "number"
+        || act === "split-target" || act === "split-swing") return;
     e.preventDefault();
     const ent = el.dataset.entity;
     switch (act) {
@@ -420,6 +553,13 @@ class ClimateManagerCard extends HTMLElement {
         break;
       case "power":
         this._call("select", "select_option", { entity_id: ent, option: el.dataset.opt });
+        break;
+      case "split-power":
+        this._call("climate_manager", "set_split", {
+          zone_id: el.dataset.zone,
+          climate_entity: ent,
+          power: el.dataset.opt || null,   // "" → null = hérite de la zone
+        });
         break;
       case "resume":
         this._call("button", "press", { entity_id: ent });
@@ -436,25 +576,53 @@ class ClimateManagerCard extends HTMLElement {
     }
   }
 
-  _onClickDetailsTrack(zoneId, open) {
-    if (open) this._open.add(zoneId);
-    else this._open.delete(zoneId);
+  _onClickDetailsTrack(set, zoneId, open) {
+    if (open) set.add(zoneId);
+    else set.delete(zoneId);
   }
 
   _onChange(e) {
-    const el = e.target.closest('input[data-act="number"]');
-    if (!el) return;
-    const v = parseFloat(el.value);
-    if (!Number.isFinite(v)) return;
-    this._call("number", "set_value", { entity_id: el.dataset.entity, value: v });
+    // Réglages numériques de zone (seuils, durées)
+    const numEl = e.target.closest('input[data-act="number"]');
+    if (numEl) {
+      const v = parseFloat(numEl.value);
+      if (!Number.isFinite(v)) return;
+      this._call("number", "set_value", { entity_id: numEl.dataset.entity, value: v });
+      return;
+    }
+    // Cible par split (vide → null = hérite de la zone)
+    const tgtEl = e.target.closest('input[data-act="split-target"]');
+    if (tgtEl) {
+      const raw = tgtEl.value.trim();
+      const target = raw === "" ? null : parseFloat(raw);
+      if (target !== null && !Number.isFinite(target)) return;
+      this._call("climate_manager", "set_split", {
+        zone_id: tgtEl.dataset.zone,
+        climate_entity: tgtEl.dataset.entity,
+        target,
+      });
+      return;
+    }
+    // Balayage par split (vide → null = ne pas piloter)
+    const swEl = e.target.closest('select[data-act="split-swing"]');
+    if (swEl) {
+      this._call("climate_manager", "set_split", {
+        zone_id: swEl.dataset.zone,
+        climate_entity: swEl.dataset.entity,
+        swing: swEl.value || null,
+      });
+    }
   }
 
   connectedCallback() {
     // Mémorise l'état ouvert/fermé des panneaux Réglages.
     this.addEventListener("toggle", (e) => {
       const d = e.target;
-      if (d.classList && d.classList.contains("cm-cfg")) {
-        this._onClickDetailsTrack(d.dataset.zone, d.open);
+      if (!d.classList) return;
+      if (d.classList.contains("cm-cfg")) {
+        this._onClickDetailsTrack(this._open, d.dataset.zone, d.open);
+      } else if (d.classList.contains("cm-splits")) {
+        this._onClickDetailsTrack(this._openSplits, d.dataset.zone, d.open);
       }
     }, true);
   }

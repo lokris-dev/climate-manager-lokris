@@ -56,8 +56,27 @@ SCHEMA_SET_SPLIT = vol.Schema(
 )
 
 
+def _migrate_system_defaults(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Backfill des réglages système (pendule + hors-gel) sur une install
+    antérieure à v1.4.0.
+
+    Les installs seedées avant l'introduction de SEED_SYSTEM n'ont pas les clés
+    pendulum_idle / frost_* dans entry.data → elles retomberaient sur les
+    defaults (pendulum_idle=False). On injecte les valeurs LOKRIS de référence
+    pour les clés ABSENTES uniquement (on ne touche jamais un réglage déjà
+    choisi par l'admin). Appelé avant la construction du coordinator pour qu'il
+    lise tout de suite les bonnes valeurs.
+    """
+    from .seed import SEED_SYSTEM
+
+    missing = {k: v for k, v in SEED_SYSTEM.items() if k not in entry.data}
+    if missing:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, **missing})
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Climate Manager from a config entry."""
+    _migrate_system_defaults(hass, entry)
     coordinator = DelormejClimateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
