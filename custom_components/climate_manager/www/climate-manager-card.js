@@ -23,6 +23,16 @@ const POWER_LEVELS = [
   ["agressif", "Frais"],
 ];
 
+// Ventilation (select zone_fan_intensity) → libellés parlants.
+const VENT_LEVELS = [
+  ["doux", "Basse"],
+  ["normal", "Auto"],
+  ["fort", "Haute"],
+];
+
+// Balayage (swing_mode de la clim) → libellés parlants. "" = ne pas piloter.
+const SWING_LABELS = { off: "Fixe", on: "Balayage", both: "Croisé", vertical: "Vertical", horizontal: "Horizontal" };
+
 const C = {
   cool: "#2f6fed",
   heat: "#e8743b",
@@ -65,25 +75,31 @@ const STYLES = `
   .cm-z-temp { font-size: 1.85rem; font-weight: 700; line-height: .95; white-space: nowrap; letter-spacing: -.02em; }
   .cm-z-temp small { font-size: .78rem; font-weight: 600; color: var(--secondary-text-color); margin-left: 1px; }
 
-  .cm-target { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .cm-target .lbl { font-size: .85rem; color: var(--secondary-text-color); }
-  .cm-target .right { display: flex; align-items: center; gap: 6px; }
-  .cm-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--divider-color); border-radius: 10px; overflow: hidden; }
-  .cm-stepper button { border: none; background: var(--card-background-color); cursor: pointer; width: 36px; font-size: 1.2rem; line-height: 1; color: var(--primary-text-color); }
+  /* Bloc de réglages symétrique : chaque ligne = libellé + contrôle aligné. */
+  .cm-ctrls { display: flex; flex-direction: column; gap: 9px; }
+  .cm-ctl { display: grid; grid-template-columns: 86px 1fr; align-items: center; gap: 10px; }
+  .cm-ctl-lbl { font-size: .8rem; font-weight: 600; color: var(--secondary-text-color); }
+  .cm-ctl[disabled] { opacity: .45; pointer-events: none; }
+
+  /* Interrupteur ON/OFF coulissant (le fond glisse à droite = Marche). */
+  .cm-switch { position: relative; display: grid; grid-template-columns: 1fr 1fr; background: var(--secondary-background-color); border-radius: 999px; padding: 4px; overflow: hidden; }
+  .cm-switch::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 999px; transition: transform .2s ease, background .2s ease; }
+  .cm-switch.off::before { transform: translateX(0); background: ${C.off}; }
+  .cm-switch.on::before { transform: translateX(100%); background: ${C.stab}; }
+  .cm-switch button { position: relative; z-index: 1; border: none; background: transparent; cursor: pointer; padding: 9px 0; font-weight: 700; font-size: .85rem; color: var(--secondary-text-color); border-radius: 999px; transition: color .18s; }
+  .cm-switch button.sel { color: #fff; }
+  .cm-switch[disabled] { opacity: .5; pointer-events: none; }
+
+  /* Cible (stepper) */
+  .cm-target-right { display: flex; align-items: center; gap: 6px; }
+  .cm-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--divider-color); border-radius: 9px; overflow: hidden; }
+  .cm-stepper button { border: none; background: var(--card-background-color); cursor: pointer; width: 38px; font-size: 1.2rem; line-height: 1; color: var(--primary-text-color); }
   .cm-stepper button:hover { background: var(--secondary-background-color); }
-  .cm-stepper .val { min-width: 56px; text-align: center; font-weight: 700; font-size: 1rem; padding: 7px 0; border-left: 1px solid var(--divider-color); border-right: 1px solid var(--divider-color); }
-  .cm-auto { font-size: .72rem; cursor: pointer; border: none; background: none; padding: 4px 4px; color: var(--primary-color); }
-  .cm-auto:hover { text-decoration: underline; }
-  .cm-auto.on { color: var(--secondary-text-color); cursor: default; }
-  .cm-target[disabled] { opacity: .45; pointer-events: none; }
+  .cm-stepper .val { min-width: 54px; text-align: center; font-weight: 700; font-size: .98rem; padding: 7px 0; border-left: 1px solid var(--divider-color); border-right: 1px solid var(--divider-color); }
+  .cm-reset-auto { border: none; background: none; cursor: pointer; color: var(--secondary-text-color); font-size: 1rem; padding: 2px 4px; line-height: 1; }
+  .cm-reset-auto:hover { color: var(--primary-color); }
 
-  .cm-row { display: flex; align-items: center; gap: 8px; }
-  .cm-onoff { flex: 0 0 auto; border: none; cursor: pointer; border-radius: 9px; padding: 7px 14px; font-weight: 600; font-size: .82rem; }
-  .cm-onoff.is-on { background: ${C.stab}; color: #fff; }
-  .cm-onoff.is-off { background: var(--secondary-background-color); color: var(--secondary-text-color); }
-  .cm-onoff[disabled] { opacity: .45; cursor: not-allowed; }
-
-  .cm-seg { display: inline-flex; flex: 1 1 auto; background: var(--secondary-background-color); border-radius: 9px; padding: 3px; gap: 2px; }
+  .cm-seg { display: inline-flex; width: 100%; background: var(--secondary-background-color); border-radius: 9px; padding: 3px; gap: 2px; }
   .cm-seg button { flex: 1; border: none; cursor: pointer; background: transparent; color: var(--secondary-text-color); padding: 6px 4px; font-size: .8rem; font-weight: 600; border-radius: 7px; }
   .cm-seg button.sel { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .cm-seg[disabled] { opacity: .45; pointer-events: none; }
@@ -256,6 +272,9 @@ class ClimateManagerCard extends HTMLElement {
         houseAbsent: !!a.house_is_absent,
         on: sw ? sw.state === "on" : true,
         power: hass.states[k.zone_power]?.state,
+        fan: hass.states[k.zone_fan_intensity]?.state,
+        swing: splits[0]?.swing ?? "",             // "" = Auto (ne pas piloter)
+        swingModes: splits[0]?.swingModes || [],
         roomTemp: hass.states[k.zone_room_temperature]?.state,
         setpointSent: hass.states[k.zone_setpoint_sent]?.state,
         windowsOpen: a.windows_open || 0,
@@ -264,6 +283,7 @@ class ClimateManagerCard extends HTMLElement {
         eids: {
           sw: k.zone_auto,
           power: k.zone_power,
+          fan: k.zone_fan_intensity,
           resetOverride: k.zone_reset_override,
           coolStart: k.seuil_debut_refroidissement,
           coolStop: k.seuil_fin_refroidissement,
@@ -375,10 +395,18 @@ class ClimateManagerCard extends HTMLElement {
   _zoneHtml(z, observe) {
     const meta = this._stateMeta(z);
     const dis = observe ? "disabled" : "";
-    const seg = POWER_LEVELS.map(
+    // Les réglages ne sont actifs que si la zone est en Marche et hors observation.
+    const cdis = z.on && !observe ? "" : "disabled";
+
+    const intSeg = POWER_LEVELS.map(
       ([val, lbl]) =>
         `<button data-act="power" data-entity="${esc(z.eids.power)}" data-opt="${val}" class="${z.power === val ? "sel" : ""}">${lbl}</button>`
     ).join("");
+    const fanSeg = VENT_LEVELS.map(
+      ([val, lbl]) =>
+        `<button data-act="fan" data-entity="${esc(z.eids.fan)}" data-opt="${val}" class="${z.fan === val ? "sel" : ""}">${lbl}</button>`
+    ).join("");
+    const swSeg = this._swingSeg(z);
 
     // Statut sur UNE ligne : en prise en main, libellé + action « Reprendre auto »
     // fusionnés (plus de bandeau séparé). Sinon, simple libellé d'état.
@@ -394,6 +422,13 @@ class ClimateManagerCard extends HTMLElement {
     }
 
     const settings = this._showSettings ? this._settingsHtml(z) : "";
+    // Interrupteur ON/OFF coulissant (le fond vert glisse à droite = Marche).
+    const sw = `
+      <div class="cm-switch ${z.on ? "on" : "off"}" ${dis}>
+        <button data-act="zone-off" data-entity="${esc(z.eids.sw)}" class="${z.on ? "" : "sel"}">Arrêt</button>
+        <button data-act="zone-on" data-entity="${esc(z.eids.sw)}" class="${z.on ? "sel" : ""}">Marche</button>
+      </div>`;
+
     return `
       <div class="cm-zone ${z.on ? "" : "off"}">
         <div class="cm-z-head">
@@ -403,62 +438,68 @@ class ClimateManagerCard extends HTMLElement {
           </div>
           <div class="cm-z-temp">${fmtTemp(z.roomTemp)}<small>°C</small></div>
         </div>
-        ${this._targetHtml(z, observe)}
-        <div class="cm-row">
-          <button class="cm-onoff ${z.on ? "is-on" : "is-off"}" data-act="toggle" data-entity="${esc(z.eids.sw)}" ${dis}>${z.on ? "Marche" : "Arrêt"}</button>
-          <div class="cm-seg" ${z.on && !observe ? "" : "disabled"}>${seg}</div>
+        ${sw}
+        <div class="cm-ctrls">
+          ${this._targetHtml(z, observe)}
+          <div class="cm-ctl" ${cdis}><span class="cm-ctl-lbl">Intensité</span><div class="cm-seg">${intSeg}</div></div>
+          <div class="cm-ctl" ${cdis}><span class="cm-ctl-lbl">Ventilation</span><div class="cm-seg">${fanSeg}</div></div>
+          ${swSeg ? `<div class="cm-ctl" ${cdis}><span class="cm-ctl-lbl">Balayage</span><div class="cm-seg">${swSeg}</div></div>` : ""}
         </div>
-        ${this._optionsHtml(z, observe)}
+        ${z.splits.length > 1 ? this._perSplitAdvanced(z, observe) : ""}
         ${settings}
       </div>`;
+  }
+
+  // Balayage au niveau zone : options réelles de la clim (swing_modes) + « Auto »
+  // (= ne pas piloter). Appliqué à tous les splits de la zone au clic.
+  _swingSeg(z) {
+    if (!(z.swingModes && z.swingModes.length)) return "";
+    const cur = z.swing || "";
+    const opts = [["", "Auto"], ...z.swingModes.map((m) => [m, SWING_LABELS[m] || m])];
+    return opts
+      .map(
+        ([val, lbl]) =>
+          `<button data-act="zone-swing" data-zone="${esc(z.id)}" data-opt="${esc(val)}" class="${cur === val ? "sel" : ""}">${esc(lbl)}</button>`
+      )
+      .join("");
   }
 
   _targetHtml(z, observe) {
     // Valeur de base du stepper : cible explicite si définie, sinon cible
     // effective (dérivée des seuils), sinon 24.
     const base = z.targetTemp != null ? z.targetTemp : (z.targetDisplay != null ? z.targetDisplay : 24);
-    const isExplicit = z.targetTemp != null;
-    const dis = observe ? "disabled" : "";
-    const autoBtn = isExplicit
-      ? `<button class="cm-auto" data-act="zone-target-auto" data-zone="${esc(z.id)}" title="Revenir à la cible automatique">auto</button>`
-      : `<span class="cm-auto on" title="Cible automatique (suit les seuils)">auto</span>`;
+    const cdis = z.on && !observe ? "" : "disabled";
+    // Petit ↺ discret pour revenir à la cible automatique (uniquement si une
+    // cible explicite a été posée) — sans l'étiquette « auto » qui déroutait.
+    const reset = z.targetTemp != null
+      ? `<button class="cm-reset-auto" data-act="zone-target-auto" data-zone="${esc(z.id)}" title="Revenir à la cible automatique">↺</button>`
+      : "";
     return `
-      <div class="cm-target" ${dis}>
-        <span class="lbl">Cible</span>
-        <div class="right">
+      <div class="cm-ctl cm-target" ${cdis}>
+        <span class="cm-ctl-lbl">Cible</span>
+        <div class="cm-target-right">
           <div class="cm-stepper">
             <button data-act="zone-target-dec" data-zone="${esc(z.id)}" data-val="${esc(base)}">−</button>
             <span class="val">${fmtTemp(base)}°</span>
             <button data-act="zone-target-inc" data-zone="${esc(z.id)}" data-val="${esc(base)}">+</button>
           </div>
-          ${autoBtn}
+          ${reset}
         </div>
       </div>`;
   }
 
-  // Panneau « Options » repliable : par-clim complet UNIQUEMENT pour les zones
-  // multi-splits (où cible/puissance peuvent différer d'un split à l'autre). En
-  // mono-split, cible et puissance sont déjà au niveau zone → on n'expose que le
-  // balayage (rien de redondant).
-  _optionsHtml(z, observe) {
-    if (!z.splits.length) return "";
+  // Réglage avancé PAR clim, uniquement pour les zones multi-splits (où
+  // cible/puissance/balayage peuvent différer d'un split à l'autre). Les
+  // contrôles zone (intensité, ventilation, balayage) restent au-dessus ; ceci
+  // n'est qu'un panneau repliable pour affiner split par split.
+  _perSplitAdvanced(z, observe) {
+    if (z.splits.length <= 1) return "";
     const open = this._openSplits.has(z.id) ? "open" : "";
     const dis = observe ? 'data-disabled="1"' : "";
-    if (z.splits.length > 1) {
-      const rows = z.splits.map((s) => this._splitRow(z, s, dis)).join("");
-      return `<details class="cm-opt" ${open} data-zone="${esc(z.id)}">
-          <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Réglage par clim (${z.splits.length})</summary>
-          ${rows}
-        </details>`;
-    }
-    const s = z.splits[0];
-    if (!(s.swingModes && s.swingModes.length)) return "";  // rien de plus à régler
+    const rows = z.splits.map((s) => this._splitRow(z, s, dis)).join("");
     return `<details class="cm-opt" ${open} data-zone="${esc(z.id)}">
-        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Options</summary>
-        <div class="cm-split" ${dis}>
-          <label>Balayage</label>
-          ${this._swingSelect(z, s)}
-        </div>
+        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Réglage par clim (${z.splits.length})</summary>
+        ${rows}
       </details>`;
   }
 
@@ -602,9 +643,29 @@ class ClimateManagerCard extends HTMLElement {
       case "toggle":
         this._call("switch", "toggle", { entity_id: ent });
         break;
+      case "zone-on":
+        this._call("switch", "turn_on", { entity_id: ent });
+        break;
+      case "zone-off":
+        this._call("switch", "turn_off", { entity_id: ent });
+        break;
       case "power":
+      case "fan":
         this._call("select", "select_option", { entity_id: ent, option: el.dataset.opt });
         break;
+      case "zone-swing": {
+        // Balayage au niveau zone → appliqué à chaque split ("" = ne pas piloter).
+        const zone = this._zones().find((z) => String(z.id) === el.dataset.zone);
+        const swing = el.dataset.opt || null;
+        for (const s of zone?.splits || []) {
+          this._call("climate_manager", "set_split", {
+            zone_id: el.dataset.zone,
+            climate_entity: s.id,
+            swing,
+          });
+        }
+        break;
+      }
       case "split-power":
         this._call("climate_manager", "set_split", {
           zone_id: el.dataset.zone,

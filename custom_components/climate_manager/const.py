@@ -213,7 +213,7 @@ class Aggressivity:
 # En cool : consigne = ancre + release (AU-DESSUS de la sonde → split allumé mais idle).
 # En heat : consigne = ancre - release (EN-DESSOUS de la sonde).
 POWER_PROFILES: dict[str, dict] = {
-    "doux":     {"attaque": 3.0, "stabilisation": 1.0, "release": 2.0},
+    "doux":     {"attaque": 2.0, "stabilisation": 1.0, "release": 2.0},
     "normal":   {"attaque": 5.0, "stabilisation": 1.5, "release": 3.0},
     "agressif": {"attaque": 7.0, "stabilisation": 2.0, "release": 4.0},
 }

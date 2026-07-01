@@ -633,7 +633,7 @@ class TestPerSplitSetpoints:
         """Un split avec power=doux reçoit un offset plus faible que l'autre en normal."""
         cfg = _split_config(
             splits_config={
-                "climate.split_a": {"power": "doux"},    # attaque = 3.0
+                "climate.split_a": {"power": "doux"},    # attaque = 2.0
                 "climate.split_b": {"power": "agressif"}, # attaque = 7.0
             }
         )
@@ -662,7 +662,7 @@ class TestPerSplitSetpoints:
             "(consigne plus haute = moins de refroidissement)"
         )
         # Valeurs attendues : internal - offset
-        assert abs(sp_a - (internal - 3.0)) < 0.5  # doux: 26-3=23
+        assert abs(sp_a - (internal - 2.0)) < 0.5  # doux: 26-2=24
         assert abs(sp_b - (internal - 7.0)) < 0.5  # agressif: 26-7=19 → clamp 18
 
     def test_per_split_command_uses_entity_id_string_not_list(self):
