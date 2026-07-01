@@ -1221,6 +1221,22 @@ class Zone:
                 ))
 
         self.state.regime = Regime.ATTAQUE if any_attack else Regime.STABILISATION
+
+        # Ventilation (groupée) — pilotée par le profil `fan_intensity` selon le
+        # régime zone (attaque/maintien), comme dans _emit_active. Ce chemin
+        # per-split ne l'émettait PAS : les zones à splits_config (toutes en
+        # pratique) ne pilotaient donc jamais leur ventilo (il restait figé sur
+        # sa dernière valeur, typiquement `auto`).
+        if inp.supports_fan_mode:
+            fan_profile = FAN_PROFILES.get(
+                p.fan_intensity, FAN_PROFILES[DEFAULT_FAN_INTENSITY]
+            )
+            target_fan = _fan_for_regime(self.state.regime, fan_profile)
+            if target_fan:
+                self.state.last_fan_sent = target_fan  # intention, même si no-op
+                if inp.clim_current_fan_mode != target_fan:
+                    cmds.append(self._cmd_set_fan_mode(target_fan))
+
         if cmds:
             self.state.last_command_ts = inp.now_ts
         return cmds
@@ -1271,6 +1287,17 @@ class Zone:
                 if self._setpoint_should_send(setpoint, inp):
                     cmds.append(self._cmd_set_temperature(setpoint))
                 self.state.last_setpoint_sent = setpoint  # intention, même si no-op
+
+        # Ventilation de maintien (groupée) — cohérent avec _emit_pendulum_per_split.
+        if inp.supports_fan_mode:
+            fan_profile = FAN_PROFILES.get(
+                p.fan_intensity, FAN_PROFILES[DEFAULT_FAN_INTENSITY]
+            )
+            target_fan = _fan_for_regime(Regime.STABILISATION, fan_profile)
+            if target_fan:
+                self.state.last_fan_sent = target_fan  # intention, même si no-op
+                if inp.clim_current_fan_mode != target_fan:
+                    cmds.append(self._cmd_set_fan_mode(target_fan))
 
         if cmds:
             self.state.last_command_ts = inp.now_ts

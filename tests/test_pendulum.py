@@ -936,3 +936,62 @@ def test_daily_reset_clears_active_direction():
     zone.daily_reset(1_000_000.0, default_power="normal")
     assert zone.state.active_direction is None
     assert zone.state.state == ZoneState.IDLE
+
+
+def _find_fan(commands):
+    for c in commands:
+        if c.service == "set_fan_mode":
+            return c.data.get("fan_mode")
+    return None
+
+
+class TestPendulumFanIntensity:
+    """Régression : le ventilo doit être piloté par fan_intensity même en mode
+    per-split (splits_config). Auparavant _emit_pendulum_per_split n'émettait
+    aucune commande set_fan_mode → la ventilation choisie (ex. doux→low)
+    n'atteignait jamais le split, qui restait figé sur `auto`."""
+
+    def test_per_split_pendulum_emits_fan_from_intensity_in_attack(self):
+        cfg = _split_config(fan_intensity="doux")  # doux → attaque = "low"
+        zone = Zone(cfg)
+        zone.state.state = ZoneState.RUNNING
+        inp = _inp(
+            room_temperature=27.0,  # au-dessus de la cible → attaque
+            clim_internal_by_entity={"climate.split_a": 25.0, "climate.split_b": 27.0},
+            clim_current_hvac_mode=HVAC_COOL,
+            clim_current_fan_mode="auto",
+            clim_setpoint_step=1.0,
+        )
+        cmds = zone.tick(inp)
+        assert _find_fan(cmds) == "low"
+        assert zone.state.regime == Regime.ATTAQUE
+
+    def test_per_split_pendulum_no_fan_command_when_already_correct(self):
+        cfg = _split_config(fan_intensity="doux")
+        zone = Zone(cfg)
+        zone.state.state = ZoneState.RUNNING
+        inp = _inp(
+            room_temperature=27.0,
+            clim_internal_by_entity={"climate.split_a": 25.0, "climate.split_b": 27.0},
+            clim_current_hvac_mode=HVAC_COOL,
+            clim_current_fan_mode="low",  # déjà bon → aucune commande
+            clim_setpoint_step=1.0,
+        )
+        cmds = zone.tick(inp)
+        assert _find_fan(cmds) is None
+
+    def test_per_split_pendulum_fan_maintien_when_target_reached(self):
+        # Cible atteinte sur tous les splits → maintien → fan "stabilisation".
+        cfg = _split_config(fan_intensity="normal")  # normal → stabilisation = "low"
+        zone = Zone(cfg)
+        zone.state.state = ZoneState.RUNNING
+        inp = _inp(
+            room_temperature=20.0,  # sous la cible de refroidissement → maintien
+            clim_internal_by_entity={"climate.split_a": 22.0, "climate.split_b": 22.0},
+            clim_current_hvac_mode=HVAC_COOL,
+            clim_current_fan_mode="auto",
+            clim_setpoint_step=1.0,
+        )
+        cmds = zone.tick(inp)
+        assert _find_fan(cmds) == "low"
+        assert zone.state.regime == Regime.STABILISATION
