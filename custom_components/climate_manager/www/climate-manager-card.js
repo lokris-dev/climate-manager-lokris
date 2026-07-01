@@ -74,6 +74,8 @@ const STYLES = `
   .cm-z-state { font-size: .78rem; color: var(--secondary-text-color); margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .cm-z-temp { font-size: 1.85rem; font-weight: 700; line-height: .95; white-space: nowrap; letter-spacing: -.02em; }
   .cm-z-temp small { font-size: .78rem; font-weight: 600; color: var(--secondary-text-color); margin-left: 1px; }
+  .cm-z-temp.cm-clickable { cursor: pointer; border-radius: 8px; padding: 2px 4px; margin: -2px -4px; transition: background .15s; }
+  .cm-z-temp.cm-clickable:hover { background: var(--secondary-background-color); }
 
   /* Bloc de réglages symétrique : chaque ligne = libellé + contrôle aligné. */
   .cm-ctrls { display: flex; flex-direction: column; gap: 9px; }
@@ -296,6 +298,7 @@ class ClimateManagerCard extends HTMLElement {
           sw: k.zone_auto,
           power: k.zone_power,
           fan: k.zone_fan_intensity,
+          roomTemp: k.zone_room_temperature,   // capteur T° zone (pour le more-info)
           resetOverride: k.zone_reset_override,
           coolStart: k.seuil_debut_refroidissement,
           coolStop: k.seuil_fin_refroidissement,
@@ -469,7 +472,9 @@ class ClimateManagerCard extends HTMLElement {
             <div class="cm-z-name">${esc(z.name)}</div>
             <div class="cm-z-state">${status}</div>
           </div>
-          <div class="cm-z-temp">${fmtTemp(z.roomTemp)}<small>°C</small></div>
+          ${z.eids.roomTemp
+            ? `<div class="cm-z-temp cm-clickable" data-act="more-info" data-entity="${esc(z.eids.roomTemp)}" title="Voir l'historique des températures">${fmtTemp(z.roomTemp)}<small>°C</small></div>`
+            : `<div class="cm-z-temp">${fmtTemp(z.roomTemp)}<small>°C</small></div>`}
         </div>
         ${sw}
         <div class="cm-ctrls">
@@ -731,6 +736,10 @@ class ClimateManagerCard extends HTMLElement {
       case "season":
         this._call("climate_manager", "set_season_mode", { mode: el.dataset.opt });
         break;
+      case "more-info":
+        // Ouvre la fenêtre native Home Assistant (avec le graphe d'historique).
+        this._moreInfo(ent);
+        break;
       case "enable-control":
         this._call("switch", "turn_on", { entity_id: ent });
         break;
@@ -793,6 +802,19 @@ class ClimateManagerCard extends HTMLElement {
 
   _call(domain, service, data) {
     this._hass.callService(domain, service, data);
+  }
+
+  _moreInfo(entityId) {
+    if (!entityId) return;
+    // Événement natif HA : composed:true pour franchir les shadow roots et
+    // atteindre <home-assistant> qui ouvre la fiche (avec l'historique).
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
+        detail: { entityId },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 }
 
