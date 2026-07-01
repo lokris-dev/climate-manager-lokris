@@ -418,6 +418,10 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         old_state = event.data.get("old_state")
         if new_state is None:
             return
+        # Une entrée en indisponibilité (le split qui se déconnecte) n'est jamais
+        # une action utilisateur — on l'ignore.
+        if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return
         zone = next(
             (
                 z
@@ -432,7 +436,11 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             return
         # Did anything user-actionable actually change? If old_state is None this
         # is the initial state (HA boot or integration reload) — not an override.
-        if old_state is None:
+        # De même, une SORTIE d'indisponibilité (unavailable/unknown → cool) est
+        # la reconnexion de l'intégration (modbus/Hitachi au reload), pas une
+        # action utilisateur : sinon TOUT le bâtiment se fige en override au
+        # moindre redémarrage/reconnexion (incident 2026-07-01, 6 zones d'un coup).
+        if old_state is None or old_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return
         if old_state.state == new_state.state and not self._user_action_changed(
             old_state, new_state

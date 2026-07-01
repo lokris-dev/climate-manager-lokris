@@ -25,6 +25,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 
 from custom_components.climate_manager.const import (
     OVERRIDE_DEBOUNCE_SECONDS,
@@ -343,3 +344,47 @@ def test_noop_setpoint_still_records_intent():
     assert not any(c.service == "set_temperature" for c in cmds2), "should be a no-op"
     assert z.state.last_setpoint_sent == intended, "intent must be recorded even on no-op"
     assert z.state.last_hvac_sent == "cool"
+
+
+@pytest.mark.asyncio
+async def test_split_going_unavailable_does_not_trigger_override():
+    """Un split qui se déconnecte (cool → unavailable) n'est pas une action
+    utilisateur : aucune décision d'override ne doit être programmée."""
+    from homeassistant.core import HomeAssistant
+    hass = HomeAssistant("/tmp")
+    coord = _make_coordinator(hass)
+    z = _zone(last_sp=19.0, last_hvac="cool")
+    z.state.state = ZoneState.RUNNING
+    coord._zones = {"z1": z}
+
+    coord._on_clim_state_changed(
+        _event("climate.z1", _st("cool", temperature=19.0, fan_mode="low"), _st(STATE_UNAVAILABLE))
+    )
+    assert "climate.z1" not in coord._pending_overrides
+    await asyncio.sleep(OVERRIDE_DEBOUNCE_SECONDS + 0.2)
+    assert z.state.state == ZoneState.RUNNING
+    await hass.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_split_reconnecting_does_not_trigger_override():
+    """2026-07-01 : à la reconnexion des clims (unavailable → unknown → cool),
+    6 zones passaient à tort en override. Une SORTIE d'indisponibilité n'est pas
+    une action utilisateur, même si la valeur diffère de l'intent."""
+    from homeassistant.core import HomeAssistant
+    hass = HomeAssistant("/tmp")
+    coord = _make_coordinator(hass)
+    z = _zone(last_sp=25.0, last_hvac="cool")
+    z.state.state = ZoneState.RUNNING
+    coord._zones = {"z1": z}
+
+    coord._on_clim_state_changed(
+        _event("climate.z1", _st(STATE_UNAVAILABLE), _st(STATE_UNKNOWN))
+    )
+    coord._on_clim_state_changed(
+        _event("climate.z1", _st(STATE_UNKNOWN), _st("cool", temperature=30.0, fan_mode="auto"))
+    )
+    assert "climate.z1" not in coord._pending_overrides
+    await asyncio.sleep(OVERRIDE_DEBOUNCE_SECONDS + 0.2)
+    assert z.state.state == ZoneState.RUNNING, "reconnexion ≠ override"
+    await hass.async_stop()
