@@ -297,6 +297,7 @@ class ClimateManagerCard extends HTMLElement {
         swingModes: splits[0]?.swingModes || [],
         roomTemp: hass.states[k.zone_room_temperature]?.state,
         setpointSent: hass.states[k.zone_setpoint_sent]?.state,
+        offset: a.offset,                         // offset pendule appliqué (°, signé)
         windowsOpen: a.windows_open || 0,
         splits,
         sensors: a.temperature_sensors || [],
@@ -640,26 +641,28 @@ class ClimateManagerCard extends HTMLElement {
       </details>`;
   }
 
-  // Quand la zone travaille : la VALEUR DU PENDULE (consigne réellement envoyée
-  // à la clim — attaque = bien en-dessous de la pièce ; relâchement = au-dessus)
-  // + l'écart restant à la cible de confort. La cible elle-même est déjà dans le
-  // stepper « Cible » → on ne la répète pas ici.
+  // Quand la zone travaille : l'OFFSET du pendule appliqué (décalage de la
+  // consigne / sonde — attaque = négatif = plus froid ; relâchement = positif)
+  // + l'écart restant à la cible de confort. La cible est déjà dans le stepper.
   _deltaTxt(z) {
     if (!z.on || (z.state !== "running" && z.state !== "starting")) return "";
-    const sp = fmtTemp(z.setpointSent);
-    const spTxt = sp !== "—" ? `consigne <b>${sp}°</b>` : "";
+    const off = z.offset;
+    const offTxt =
+      off != null && Number.isFinite(off)
+        ? `offset <b>${off < 0 ? "−" : "+"}${(Math.abs(off) % 1 ? Math.abs(off).toFixed(1) : Math.abs(off).toFixed(0))}°</b>`
+        : "";
     const join = (a, b) => (a && b ? `${a} · ${b}` : a || b);
-    if (z.regime === "stabilisation") return join(spTxt, "maintien");
+    if (z.regime === "stabilisation") return join(offTxt, "maintien");
     const target = z.targetDisplay ?? z.targetTemp;
     const room = parseFloat(z.roomTemp);
-    if (target == null || !Number.isFinite(room)) return spTxt;
+    if (target == null || !Number.isFinite(room)) return offTxt;
     const d = room - target;
     const heat = z.dir === "heat";
     // Proche de la cible → pas d'écart trompeur (« ▼ 0,1° »).
-    if ((heat && d >= -0.3) || (!heat && d <= 0.3)) return join(spTxt, "quasi à la cible");
+    if ((heat && d >= -0.3) || (!heat && d <= 0.3)) return join(offTxt, "quasi à la cible");
     const arrow = heat ? "▲" : "▼";
     const verbe = heat ? "à gagner" : "à perdre";
-    return join(spTxt, `${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`);
+    return join(offTxt, `${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`);
   }
 
   _stateMeta(z) {

@@ -62,6 +62,7 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             "regime": d.get("regime"),
             "direction": d.get("direction"),
             "target_temperature": d.get("target_temperature"),
+            "offset": d.get("offset"),  # offset pendule appliqué (°, signé)
             "aggressivity": d.get("aggressivity"),
             "power": d.get("power"),
             "fan_intensity": d.get("fan_intensity"),

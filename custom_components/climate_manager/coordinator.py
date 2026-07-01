@@ -40,12 +40,14 @@ from .const import (
     DEFAULT_SETPOINT_STEP,
     DOMAIN,
     OVERRIDE_DEBOUNCE_SECONDS,
+    POWER_PROFILES,
     SEASON_AUTO_COOL_ABOVE,
     SEASON_AUTO_HEAT_BELOW,
     SEASON_SUMMER,
     SEASON_WINTER,
     SETPOINT_NOOP_DELTA,
     UPDATE_INTERVAL_SECONDS,
+    Regime,
     SeasonMode,
     ZoneMode,
     ZoneState,
@@ -990,6 +992,21 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 elif rt is not None and rt < active.seuil_debut_chauffage:
                     direction, target_temperature = "heat", active.seuil_fin_chauffage
 
+            # Offset du pendule effectivement appliqué (°, signé) : décalage de la
+            # consigne par rapport à la sonde. Négatif = plus froid que la sonde,
+            # positif = plus chaud. Attaque cool = -attaque ; relachement cool =
+            # +release (le pendule bascule au-dessus pour laisser idler). Source :
+            # POWER_PROFILES (même valeurs que le pilotage). None si zone au repos.
+            offset: float | None = None
+            if direction in ("cool", "heat"):
+                prof = POWER_PROFILES.get(active.power, POWER_PROFILES[DEFAULT_POWER])
+                if zone.state.regime == Regime.ATTAQUE:
+                    mag = prof["attaque"]
+                    offset = -mag if direction == "cool" else mag
+                elif zone.state.regime == Regime.STABILISATION:
+                    mag = prof["release"]
+                    offset = mag if direction == "cool" else -mag
+
             out["zones"][zid] = {
                 "config": zone.config,
                 "state": zone.state.state,
@@ -1013,6 +1030,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "cycle_started_ts": zone.state.cycle_started_ts,
                 "direction": direction,
                 "target_temperature": target_temperature,
+                "offset": offset,  # offset pendule appliqué (°, signé) — cf. carte
                 "aggressivity": zone.config.aggressivity,  # legacy alias
                 "power": active.power,
                 "fan_intensity": active.fan_intensity,
