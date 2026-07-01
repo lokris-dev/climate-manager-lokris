@@ -640,23 +640,26 @@ class ClimateManagerCard extends HTMLElement {
       </details>`;
   }
 
-  // Écart à la cible quand la zone travaille : « cible 24° · ▼ 2,0° à perdre ».
-  // Rend l'action concrète (combien de degrés il reste à gagner/perdre).
+  // Quand la zone travaille : la VALEUR DU PENDULE (consigne réellement envoyée
+  // à la clim — attaque = bien en-dessous de la pièce ; relâchement = au-dessus)
+  // + l'écart restant à la cible de confort. La cible elle-même est déjà dans le
+  // stepper « Cible » → on ne la répète pas ici.
   _deltaTxt(z) {
     if (!z.on || (z.state !== "running" && z.state !== "starting")) return "";
+    const sp = fmtTemp(z.setpointSent);
+    const spTxt = sp !== "—" ? `consigne <b>${sp}°</b>` : "";
+    const join = (a, b) => (a && b ? `${a} · ${b}` : a || b);
+    if (z.regime === "stabilisation") return join(spTxt, "maintien");
     const target = z.targetDisplay ?? z.targetTemp;
-    if (target == null) return "";
-    const t = fmtTemp(target);
-    if (z.regime === "stabilisation") return `cible <b>${t}°</b> · atteinte, maintien`;
     const room = parseFloat(z.roomTemp);
-    if (!Number.isFinite(room)) return `cible <b>${t}°</b>`;
+    if (target == null || !Number.isFinite(room)) return spTxt;
     const d = room - target;
     const heat = z.dir === "heat";
     // Proche de la cible → pas d'écart trompeur (« ▼ 0,1° »).
-    if ((heat && d >= -0.3) || (!heat && d <= 0.3)) return `cible <b>${t}°</b> · quasi atteinte`;
+    if ((heat && d >= -0.3) || (!heat && d <= 0.3)) return join(spTxt, "quasi à la cible");
     const arrow = heat ? "▲" : "▼";
     const verbe = heat ? "à gagner" : "à perdre";
-    return `cible <b>${t}°</b> · ${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`;
+    return join(spTxt, `${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`);
   }
 
   _stateMeta(z) {
