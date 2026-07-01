@@ -140,7 +140,7 @@
         "state": {
           "doux": "Doux",
           "normal": "Normal",
-          "agressif": "Agressif"
+          "agressif": "Fort"
         }
       },
       "zone_fan_intensity": {

@@ -17,10 +17,13 @@
  *                                   #   pour poser le widget d'une zone dans une pièce)
  */
 
+// Intensité = puissance de régulation (offset), indépendante du sens : en froid
+// « Fort » pousse plus froid, en chaud plus chaud. D'où des libellés neutres
+// (Doux ↔ Fort), pas « Frais » qui ne vaudrait que pour la clim.
 const POWER_LEVELS = [
   ["doux", "Doux"],
   ["normal", "Normal"],
-  ["agressif", "Frais"],
+  ["agressif", "Fort"],
 ];
 
 // Ventilation (select zone_fan_intensity) → libellés parlants.
