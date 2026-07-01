@@ -72,6 +72,12 @@ const STYLES = `
   .cm-z-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
   .cm-z-name { font-weight: 700; font-size: 1.05rem; line-height: 1.2; }
   .cm-z-state { font-size: .78rem; color: var(--secondary-text-color); margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cm-state-main { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .cm-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .cm-dot.pulse { animation: cm-pulse 1.5s ease-in-out infinite; }
+  @keyframes cm-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: .45; } }
+  .cm-delta { color: var(--secondary-text-color); }
+  .cm-delta b { color: var(--primary-text-color); font-weight: 700; }
   .cm-z-temp { font-size: 1.85rem; font-weight: 700; line-height: .95; white-space: nowrap; letter-spacing: -.02em; }
   .cm-z-temp small { font-size: .78rem; font-weight: 600; color: var(--secondary-text-color); margin-left: 1px; }
   .cm-z-temp.cm-clickable { cursor: pointer; border-radius: 8px; padding: 2px 4px; margin: -2px -4px; transition: background .15s; }
@@ -444,17 +450,26 @@ class ClimateManagerCard extends HTMLElement {
     ).join("");
     const swSeg = this._swingSeg(z);
 
-    // Statut sur UNE ligne : en prise en main, libellé + action « Reprendre auto »
-    // fusionnés (plus de bandeau séparé). Sinon, simple libellé d'état.
+    // Statut sur UNE ligne : pastille colorée (qui pulse quand ça travaille) +
+    // libellé coloré + écart à la cible. En prise en main : action « Reprendre auto ».
+    const pulsing = z.on && (z.state === "running" || z.state === "starting") && z.regime !== "stabilisation";
     let status;
     if (z.inOverride) {
       const until = z.overrideUntilReset ? "jusqu'au reset" : this._untilTxt(z.overrideUntil);
       const resume = z.eids.resetOverride
         ? `· <button class="cm-link" data-act="resume" data-entity="${esc(z.eids.resetOverride)}" ${dis}>Reprendre auto</button>`
         : "";
-      status = `✋ Pris en main ${esc(until)} ${resume}`;
+      status =
+        `<span class="cm-state-main" style="color:${C.override}"><span class="cm-dot" style="background:${C.override}"></span>✋ Pris en main</span>` +
+        ` <span class="cm-delta">${esc(until)} ${resume}</span>`;
     } else {
-      status = `${esc(meta.label)}${z.windowsOpen ? " · fenêtre ouverte" : ""}`;
+      const delta = this._deltaTxt(z);
+      status =
+        `<span class="cm-state-main" style="color:${meta.color}">` +
+          `<span class="cm-dot${pulsing ? " pulse" : ""}" style="background:${meta.color}"></span>${esc(meta.label)}` +
+        `</span>` +
+        (delta ? ` <span class="cm-delta">${delta}</span>` : "") +
+        (z.windowsOpen ? ` <span class="cm-delta">· fenêtre ouverte</span>` : "");
     }
 
     const settings = this._showSettings ? this._settingsHtml(z) : "";
@@ -623,6 +638,25 @@ class ClimateManagerCard extends HTMLElement {
           <div class="cm-chips full">${chips(z.sensors)}</div>
         </div>
       </details>`;
+  }
+
+  // Écart à la cible quand la zone travaille : « cible 24° · ▼ 2,0° à perdre ».
+  // Rend l'action concrète (combien de degrés il reste à gagner/perdre).
+  _deltaTxt(z) {
+    if (!z.on || (z.state !== "running" && z.state !== "starting")) return "";
+    const target = z.targetDisplay ?? z.targetTemp;
+    if (target == null) return "";
+    const t = fmtTemp(target);
+    if (z.regime === "stabilisation") return `cible <b>${t}°</b> · atteinte, maintien`;
+    const room = parseFloat(z.roomTemp);
+    if (!Number.isFinite(room)) return `cible <b>${t}°</b>`;
+    const d = room - target;
+    const heat = z.dir === "heat";
+    // Proche de la cible → pas d'écart trompeur (« ▼ 0,1° »).
+    if ((heat && d >= -0.3) || (!heat && d <= 0.3)) return `cible <b>${t}°</b> · quasi atteinte`;
+    const arrow = heat ? "▲" : "▼";
+    const verbe = heat ? "à gagner" : "à perdre";
+    return `cible <b>${t}°</b> · ${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`;
   }
 
   _stateMeta(z) {
