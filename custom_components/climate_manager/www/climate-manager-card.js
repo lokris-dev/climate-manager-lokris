@@ -54,13 +54,14 @@ const STYLES = `
   .cm-embedded { display: flex; flex-direction: column; gap: 0; }
   .cm-embedded .cm-zone { margin: 0; border: none; border-radius: 0; background: transparent; }
   .cm-embedded .cm-zone + .cm-zone { border-top: 1px solid var(--divider-color); }
-  .cm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-  .cm-title { font-size: 1.3rem; font-weight: 600; }
-  .cm-head-right { display: flex; align-items: center; gap: 8px; }
-  .cm-sys { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; padding: 4px 10px; border-radius: 999px; background: var(--secondary-background-color); color: var(--secondary-text-color); }
+  .cm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+  .cm-head-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 30px; }
+  .cm-title { font-size: 1.2rem; font-weight: 700; letter-spacing: -.01em; }
+  .cm-head-right { display: flex; align-items: center; gap: 6px; }
+  .cm-sys { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 600; padding: 5px 11px; border-radius: 999px; background: var(--secondary-background-color); color: var(--secondary-text-color); }
   .cm-sys.on { color: #fff; background: ${C.stab}; }
-  .cm-sys .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  .cm-reset { cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); border-radius: 8px; padding: 6px 10px; font-size: .82rem; display: inline-flex; gap: 6px; align-items: center; }
+  .cm-sys .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .cm-reset { cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--secondary-text-color); border-radius: 8px; padding: 6px 11px; font-size: .8rem; font-weight: 600; display: inline-flex; gap: 6px; align-items: center; transition: border-color .15s, color .15s; }
   .cm-reset:hover { border-color: var(--primary-color); color: var(--primary-color); }
 
   .cm-paused { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: ${C.window}1f; border: 1px solid ${C.window}66; border-radius: 10px; padding: 10px 12px; font-size: .86rem; }
@@ -140,14 +141,17 @@ const STYLES = `
   .cm-frost .cm-frost-when { color: var(--secondary-text-color); margin-left: auto; }
 
   /* Sens global du groupe extérieur (mono-mode) — auto / été / hiver */
-  .cm-season { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; border-radius: 10px; padding: 8px 12px; font-size: .82rem; background: var(--secondary-background-color); }
-  .cm-season.heat { background: ${C.heat}14; border: 1px solid ${C.heat}44; }
-  .cm-season.cool { background: ${C.cool}14; border: 1px solid ${C.cool}44; }
-  .cm-season-lbl { font-weight: 600; }
-  .cm-season-lbl b { font-weight: 700; }
-  .cm-season-auto { color: var(--secondary-text-color); font-weight: 600; }
+  .cm-season { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-radius: 12px; padding: 9px 12px; font-size: .82rem; border: 1px solid transparent; }
+  .cm-season.heat { background: ${C.heat}12; border-color: ${C.heat}33; }
+  .cm-season.cool { background: ${C.cool}12; border-color: ${C.cool}33; }
+  .cm-season-ico { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; font-size: 1rem; flex: 0 0 auto; }
+  .cm-season.cool .cm-season-ico { background: ${C.cool}22; }
+  .cm-season.heat .cm-season-ico { background: ${C.heat}22; }
+  .cm-season-txt { display: flex; flex-direction: column; line-height: 1.25; }
+  .cm-season-lbl { font-weight: 700; }
+  .cm-season-sub { font-size: .74rem; color: var(--secondary-text-color); text-transform: capitalize; }
   .cm-season-seg { width: auto; margin-left: auto; }
-  .cm-season-seg button { padding: 6px 12px; flex: 0 0 auto; }
+  .cm-season-seg button { padding: 6px 13px; flex: 0 0 auto; }
   .cm-season[disabled] { opacity: .5; pointer-events: none; }
 
   details.cm-opt { border-top: 1px solid var(--divider-color); padding-top: 10px; }
@@ -348,16 +352,19 @@ class ClimateManagerCard extends HTMLElement {
     }
     const absent = zones.some((z) => z.houseAbsent);
 
+    // En mode system (coiffe une colonne déjà titrée par la section), on n'affiche
+    // pas le titre de la carte pour éviter le doublon « Climatisation ».
+    const showTitle = !this._systemOnly;
+    const titleHtml = showTitle ? `<span class="cm-title">${esc(this._title)}</span>` : "";
+
     let head;
     if (observe) {
-      head = `
-        <div class="cm-head">
-          <div class="cm-title">${esc(this._title)}</div>
-        </div>
+      const banner = `
         <div class="cm-paused">
           <span>⏸ <b>Mode observation</b> — aucune commande n'est envoyée aux clims. La carte affiche seulement les températures et l'état réel.</span>
           <button class="cm-go" data-act="enable-control" data-entity="${esc(ctrl.eid)}">Activer le pilotage</button>
         </div>`;
+      head = showTitle ? `<div class="cm-head"><div class="cm-head-left">${titleHtml}</div></div>${banner}` : banner;
     } else {
       const sys = absent
         ? `<span class="cm-sys"><span class="dot"></span>En veille · bâtiment fermé</span>`
@@ -367,9 +374,8 @@ class ClimateManagerCard extends HTMLElement {
         : "";
       head = `
         <div class="cm-head">
-          <div class="cm-title">${esc(this._title)}</div>
+          <div class="cm-head-left">${titleHtml}${sys}</div>
           <div class="cm-head-right">
-            ${sys}
             ${obsBtn}
             <button class="cm-reset" data-act="reset-daily" title="Remet toutes les zones en Marche + Normal">↻ Réinitialiser</button>
           </div>
@@ -413,16 +419,21 @@ class ClimateManagerCard extends HTMLElement {
     const s = zones.find((z) => z.season)?.season;
     if (!s) return "";
     const heat = s.direction === "heat";
-    const dirTxt = heat ? "chaud 🔥" : "froid ❄️";
+    const ico = heat ? "🔥" : "❄️";
+    const dirWord = heat ? "chaud" : "froid";
+    const sub = s.mode === "auto" ? `${dirWord} · choix auto` : `${dirWord} · forcé`;
     const dis = observe ? "disabled" : "";
     const opts = [["auto", "Auto"], ["ete", "Été"], ["hiver", "Hiver"]];
     const seg = opts
       .map(([v, l]) =>
         `<button data-act="season" data-opt="${v}" class="${s.mode === v ? "sel" : ""}">${l}</button>`)
       .join("");
-    const autoNote = s.mode === "auto" ? ` <span class="cm-season-auto">→ ${dirTxt} (auto)</span>` : "";
     return `<div class="cm-season ${heat ? "heat" : "cool"}" ${dis}>
-        <span class="cm-season-lbl">Groupe extérieur<b>${s.mode === "auto" ? "" : " · " + dirTxt}</b>${autoNote}</span>
+        <span class="cm-season-ico">${ico}</span>
+        <div class="cm-season-txt">
+          <span class="cm-season-lbl">Groupe extérieur</span>
+          <span class="cm-season-sub">${sub}</span>
+        </div>
         <div class="cm-seg cm-season-seg">${seg}</div>
       </div>`;
   }
