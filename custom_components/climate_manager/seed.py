@@ -114,7 +114,7 @@ def _zone_dict(
         "seuil_debut_chauffage": consigne - 3.0,
         "seuil_fin_chauffage": consigne - 2.0,
         "power": "doux",
-        "fan_intensity": "normal",
+        "fan_intensity": "doux",
         # Boulot : la main prise par un collègue tient jusqu'au reset du matin.
         "override_until_reset": True,
         # Paramètres par split (§3) : vide → héritage du niveau zone.

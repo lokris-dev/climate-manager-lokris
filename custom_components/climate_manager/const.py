@@ -71,7 +71,7 @@ CONF_FAN_INTENSITY = "fan_intensity"
 
 DEFAULT_AGGRESSIVITY = "normal"
 DEFAULT_POWER = "doux"          # intensité par défaut : douce (offset d'attaque le plus faible)
-DEFAULT_FAN_INTENSITY = "normal"
+DEFAULT_FAN_INTENSITY = "doux"   # ventilation par défaut : basse (souffle discret)
 
 # Defaults
 DEFAULT_SEUIL_DEBUT_CHAUFFAGE = 19.5
