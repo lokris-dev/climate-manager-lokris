@@ -103,6 +103,11 @@ class ZoneInputs:
     # par split (§3) : chaque split reçoit une consigne ancrée sur SA propre
     # sonde plutôt que sur la moyenne zone.
     clim_internal_by_entity: dict[str, float] = field(default_factory=dict)
+    # Sens global imposé par le système ('cool' | 'heat' | None). UN seul groupe
+    # extérieur = un seul mode à la fois : la zone ne peut engager QUE ce sens
+    # (ou rester au repos), jamais l'opposé. None = pas de contrainte (tests /
+    # rétro-compat) → la zone décide librement les deux sens (ancien comportement).
+    system_direction: str | None = None
 
 
 @dataclass(frozen=True)
@@ -810,10 +815,13 @@ class Zone:
             self._decide_pendulum(inp, p)
             return
 
+        sd = inp.system_direction  # sens global imposé (groupe mono-mode)
+        allow_cool = inp.supports_cool and sd in (None, HVACMode.COOL)
+        allow_heat = inp.supports_heat and sd in (None, HVACMode.HEAT)
         if self.state.state == ZoneState.IDLE:
-            if inp.supports_cool and inp.room_temperature > p.seuil_debut_refroidissement:
+            if allow_cool and inp.room_temperature > p.seuil_debut_refroidissement:
                 self._transition(ZoneState.STARTING, inp.now_ts)
-            elif inp.supports_heat and inp.room_temperature < p.seuil_debut_chauffage:
+            elif allow_heat and inp.room_temperature < p.seuil_debut_chauffage:
                 self._transition(ZoneState.STARTING, inp.now_ts)
         elif self.state.state == ZoneState.RUNNING:
             in_heat = inp.clim_current_hvac_mode == HVACMode.HEAT
@@ -837,30 +845,48 @@ class Zone:
         if rt is None:
             return
         ad = self.state.active_direction
+        sd = inp.system_direction  # sens global imposé ('cool'|'heat'|None)
 
-        # Déverrouillage : franchissement du seuil de début OPPOSÉ
-        if ad == HVACMode.COOL and inp.supports_heat and rt < p.seuil_debut_chauffage:
-            self.state.active_direction = None
-            ad = None
-        elif ad == HVACMode.HEAT and inp.supports_cool and rt > p.seuil_debut_refroidissement:
-            self.state.active_direction = None
-            ad = None
+        if sd in (HVACMode.COOL, HVACMode.HEAT):
+            # Groupe extérieur mono-mode : la zone ne peut engager QUE `sd`.
+            # On purge une direction opposée héritée d'avant une bascule de saison
+            # (sinon un split resterait bloqué dans l'ancien sens et bloquerait le
+            # groupe). Une fois `sd` engagé, on le garde (pendule : reste actif).
+            if ad is not None and ad != sd:
+                self.state.active_direction = None
+                ad = None
+            if ad is None:
+                if sd == HVACMode.COOL and inp.supports_cool and rt > p.seuil_debut_refroidissement:
+                    self.state.active_direction = HVACMode.COOL
+                elif sd == HVACMode.HEAT and inp.supports_heat and rt < p.seuil_debut_chauffage:
+                    self.state.active_direction = HVACMode.HEAT
+        else:
+            # Pas de contrainte système (rétro-compat) — comportement historique.
+            # Déverrouillage : franchissement du seuil de début OPPOSÉ
+            if ad == HVACMode.COOL and inp.supports_heat and rt < p.seuil_debut_chauffage:
+                self.state.active_direction = None
+                ad = None
+            elif ad == HVACMode.HEAT and inp.supports_cool and rt > p.seuil_debut_refroidissement:
+                self.state.active_direction = None
+                ad = None
 
-        # Engagement d'une direction si aucune n'est verrouillée
-        if ad is None:
-            if inp.supports_cool and rt > p.seuil_debut_refroidissement:
-                self.state.active_direction = HVACMode.COOL
-            elif inp.supports_heat and rt < p.seuil_debut_chauffage:
-                self.state.active_direction = HVACMode.HEAT
+            # Engagement d'une direction si aucune n'est verrouillée
+            if ad is None:
+                if inp.supports_cool and rt > p.seuil_debut_refroidissement:
+                    self.state.active_direction = HVACMode.COOL
+                elif inp.supports_heat and rt < p.seuil_debut_chauffage:
+                    self.state.active_direction = HVACMode.HEAT
 
         # Transitions d'état : IDLE → STARTING dès qu'on a une direction
         if self.state.state == ZoneState.IDLE and self.state.active_direction is not None:
             self._transition(ZoneState.STARTING, inp.now_ts)
         # RUNNING : si on n'a pas de active_direction (restart depuis un état
-        # antérieur), on la déduit du mode courant du split.
+        # antérieur), on la déduit du mode courant du split — SAUF si le système
+        # impose un sens opposé (ne jamais ré-adopter le mode qui bloque le groupe).
         elif self.state.state == ZoneState.RUNNING and self.state.active_direction is None:
-            if inp.clim_current_hvac_mode in (HVACMode.COOL, HVACMode.HEAT):
-                self.state.active_direction = inp.clim_current_hvac_mode
+            cur = inp.clim_current_hvac_mode
+            if cur in (HVACMode.COOL, HVACMode.HEAT) and (sd is None or cur == sd):
+                self.state.active_direction = cur
         # En RUNNING : PAS de transition vers STABILIZING (géré dans _maybe_advance)
 
     def _pilot(self, inp: ZoneInputs) -> list[Command]:
@@ -962,9 +988,14 @@ class Zone:
         if inp.room_temperature is None:
             return None
         p = self._active(inp)
-        if inp.supports_cool and inp.room_temperature > p.seuil_debut_refroidissement:
+        # Le sens global imposé (groupe mono-mode) filtre le repli par seuils :
+        # on ne renvoie jamais un sens interdit par le système.
+        sd = inp.system_direction
+        allow_cool = inp.supports_cool and sd in (None, HVACMode.COOL)
+        allow_heat = inp.supports_heat and sd in (None, HVACMode.HEAT)
+        if allow_cool and inp.room_temperature > p.seuil_debut_refroidissement:
             return HVACMode.COOL
-        if inp.supports_heat and inp.room_temperature < p.seuil_debut_chauffage:
+        if allow_heat and inp.room_temperature < p.seuil_debut_chauffage:
             return HVACMode.HEAT
         return None
 

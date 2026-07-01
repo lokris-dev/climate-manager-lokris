@@ -144,3 +144,22 @@ set_zone_target:
           max: 30
           step: 0.5
           unit_of_measurement: "°C"
+
+set_season_mode:
+  name: Sens du groupe extérieur (saison)
+  description: >-
+    Change le sens global imposé à toute la flotte (un seul groupe extérieur =
+    un seul mode à la fois). auto = choix automatique sur la T° moyenne
+    bâtiment ; ete = force le froid ; hiver = force le chaud.
+  fields:
+    mode:
+      name: Mode
+      description: auto, ete ou hiver.
+      required: true
+      example: auto
+      selector:
+        select:
+          options:
+            - "auto"
+            - "ete"
+            - "hiver"

@@ -128,6 +128,17 @@ const STYLES = `
   .cm-frost b { font-weight: 700; }
   .cm-frost .cm-frost-when { color: var(--secondary-text-color); margin-left: auto; }
 
+  /* Sens global du groupe extérieur (mono-mode) — auto / été / hiver */
+  .cm-season { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; border-radius: 10px; padding: 8px 12px; font-size: .82rem; background: var(--secondary-background-color); }
+  .cm-season.heat { background: ${C.heat}14; border: 1px solid ${C.heat}44; }
+  .cm-season.cool { background: ${C.cool}14; border: 1px solid ${C.cool}44; }
+  .cm-season-lbl { font-weight: 600; }
+  .cm-season-lbl b { font-weight: 700; }
+  .cm-season-auto { color: var(--secondary-text-color); font-weight: 600; }
+  .cm-season-seg { width: auto; margin-left: auto; }
+  .cm-season-seg button { padding: 6px 12px; flex: 0 0 auto; }
+  .cm-season[disabled] { opacity: .5; pointer-events: none; }
+
   details.cm-opt { border-top: 1px solid var(--divider-color); padding-top: 10px; }
   details.cm-opt > summary { cursor: pointer; font-size: .78rem; color: var(--secondary-text-color); list-style: none; display: flex; align-items: center; gap: 6px; }
   details.cm-opt > summary::-webkit-details-marker { display: none; }
@@ -266,6 +277,7 @@ class ClimateManagerCard extends HTMLElement {
         targetTemp: a.target_temp ?? null,           // cible explicite (null = auto)
         targetDisplay: a.target_temperature ?? null, // cible effective affichée
         frost: a.frost || null,
+        season: a.season || null,
         inOverride: !!a.in_override,
         overrideUntilReset: !!a.override_until_reset,
         overrideUntil: hass.states[k.zone_override_until]?.state,
@@ -351,14 +363,15 @@ class ClimateManagerCard extends HTMLElement {
         </div>`;
     }
 
-    // Mode system : en-tête + bannière hors-gel seuls (coiffe les widgets/zone).
+    // Mode system : en-tête + sélecteur saison + bannière hors-gel (coiffe les zones).
     if (this._systemOnly) {
-      this._body.innerHTML = `${head}${this._frostBanner(zones)}`;
+      this._body.innerHTML = `${head}${this._seasonHtml(zones, observe)}${this._frostBanner(zones)}`;
       return;
     }
 
     this._body.innerHTML = `
       ${head}
+      ${this._seasonHtml(zones, observe)}
       ${this._frostBanner(zones)}
       <div class="cm-zones">${zones.map((z) => this._zoneHtml(z, observe)).join("")}</div>
       <div class="cm-foot">Réglages structurels (zones, capteurs) et hors-gel : <em>Paramètres → Appareils &amp; services → Climate Manager → Configurer</em>.</div>
@@ -378,6 +391,26 @@ class ClimateManagerCard extends HTMLElement {
     return `<div class="cm-frost ${heat ? "heat" : "cool"}">
         <span>${icon} <b>${esc(what)}</b> — toutes les zones tournent (régulation pendule) car le bâtiment est fermé.</span>
         <span class="cm-frost-when">${esc(until)}</span>
+      </div>`;
+  }
+
+  _seasonHtml(zones, observe) {
+    // Sens global du groupe extérieur (mono-mode) — un seul groupe = froid OU
+    // chaud pour TOUTE la flotte. Même valeur sur chaque zone → on lit la 1ère.
+    const s = zones.find((z) => z.season)?.season;
+    if (!s) return "";
+    const heat = s.direction === "heat";
+    const dirTxt = heat ? "chaud 🔥" : "froid ❄️";
+    const dis = observe ? "disabled" : "";
+    const opts = [["auto", "Auto"], ["ete", "Été"], ["hiver", "Hiver"]];
+    const seg = opts
+      .map(([v, l]) =>
+        `<button data-act="season" data-opt="${v}" class="${s.mode === v ? "sel" : ""}">${l}</button>`)
+      .join("");
+    const autoNote = s.mode === "auto" ? ` <span class="cm-season-auto">→ ${dirTxt} (auto)</span>` : "";
+    return `<div class="cm-season ${heat ? "heat" : "cool"}" ${dis}>
+        <span class="cm-season-lbl">Groupe extérieur<b>${s.mode === "auto" ? "" : " · " + dirTxt}</b>${autoNote}</span>
+        <div class="cm-seg cm-season-seg">${seg}</div>
       </div>`;
   }
 
@@ -694,6 +727,9 @@ class ClimateManagerCard extends HTMLElement {
         break;
       case "reset-daily":
         this._call("climate_manager", "reset_daily", {});
+        break;
+      case "season":
+        this._call("climate_manager", "set_season_mode", { mode: el.dataset.opt });
         break;
       case "enable-control":
         this._call("switch", "turn_on", { entity_id: ent });

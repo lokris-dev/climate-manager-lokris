@@ -119,6 +119,14 @@
       }
     },
     "select": {
+      "season_mode": {
+        "name": "Saison (sens du groupe)",
+        "state": {
+          "auto": "Auto",
+          "ete": "Été (froid)",
+          "hiver": "Hiver (chaud)"
+        }
+      },
       "zone_mode": {
         "name": "Mode",
         "state": {

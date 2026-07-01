@@ -28,6 +28,7 @@ from .const import (
     CONF_PENDULUM_IDLE,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
+    CONF_SEASON_MODE,
     CONF_ZONES,
     DEFAULT_FROST_DURATION_MIN,
     DEFAULT_FROST_MAX_TEMP,
@@ -35,11 +36,17 @@ from .const import (
     DEFAULT_FROST_PROTECTION_ENABLED,
     DEFAULT_PENDULUM_IDLE,
     DEFAULT_POWER,
+    DEFAULT_SEASON_MODE,
     DEFAULT_SETPOINT_STEP,
     DOMAIN,
     OVERRIDE_DEBOUNCE_SECONDS,
+    SEASON_AUTO_COOL_ABOVE,
+    SEASON_AUTO_HEAT_BELOW,
+    SEASON_SUMMER,
+    SEASON_WINTER,
     SETPOINT_NOOP_DELTA,
     UPDATE_INTERVAL_SECONDS,
+    SeasonMode,
     ZoneMode,
     ZoneState,
 )
@@ -94,6 +101,11 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         # État du cycle hors-gel (§2). Persisté dans le runtime store.
         self._frost_start_ts: float | None = None
         self._frost_direction: str | None = None  # 'heat' | 'cool'
+        # Sens global du groupe extérieur. `_season_direction` = mémoire du mode
+        # auto (hystérésis, persistée). `_current_system_direction` = sens
+        # effectif du tick courant (saison ou hors-gel), injecté dans les zones.
+        self._season_direction: str | None = None      # 'heat' | 'cool' (mémoire auto)
+        self._current_system_direction: str | None = None
         self._rebuild_zones()
 
     # === Public API for platforms ===
@@ -124,6 +136,58 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             self.entry, data={**self.entry.data, CONF_CONTROL_ENABLED: enabled}
         )
         await self.async_request_refresh()
+
+    # === Sens global du groupe extérieur (saison auto / été / hiver) ===
+
+    def season_mode(self) -> str:
+        """Mode de saison système : 'auto' | 'ete' | 'hiver'."""
+        mode = self.entry.data.get(CONF_SEASON_MODE, DEFAULT_SEASON_MODE)
+        return mode if mode in SeasonMode.ALL else DEFAULT_SEASON_MODE
+
+    async def async_set_season_mode(self, mode: str) -> None:
+        """Change le mode de saison (sélecteur système). Un tick applique le
+        nouveau sens à toute la flotte au refresh suivant."""
+        if mode not in SeasonMode.ALL or mode == self.season_mode():
+            return
+        self.hass.config_entries.async_update_entry(
+            self.entry, data={**self.entry.data, CONF_SEASON_MODE: mode}
+        )
+        await self.async_request_refresh()
+
+    def _resolve_season_direction(self) -> str:
+        """Sens dicté par la saison ('cool' | 'heat').
+
+        - été  → froid ; hiver → chaud (override manuel).
+        - auto → hystérésis large sur la T° moyenne bâtiment ; entre les deux
+          seuils on garde le dernier sens (mémoire persistée). Défaut froid si
+          aucune mémoire ni température.
+        """
+        mode = self.season_mode()
+        if mode == SEASON_SUMMER:
+            self._season_direction = "cool"
+            return "cool"
+        if mode == SEASON_WINTER:
+            self._season_direction = "heat"
+            return "heat"
+        # auto
+        avg = self._building_avg_temperature()
+        if avg is not None:
+            if avg >= SEASON_AUTO_COOL_ABOVE:
+                self._season_direction = "cool"
+            elif avg <= SEASON_AUTO_HEAT_BELOW:
+                self._season_direction = "heat"
+            elif self._season_direction is None:
+                # Première décision sans mémoire : point milieu de l'hystérésis.
+                mid = (SEASON_AUTO_COOL_ABOVE + SEASON_AUTO_HEAT_BELOW) / 2
+                self._season_direction = "cool" if avg >= mid else "heat"
+        return self._season_direction or "cool"
+
+    def _compute_system_direction(self) -> str:
+        """Sens effectif imposé à toute la flotte ce tick : le hors-gel (quand un
+        cycle tourne, bâtiment armé) prime sur la saison."""
+        if self._frost_active() and self._frost_direction:
+            return self._frost_direction
+        return self._resolve_season_direction()
 
     # Champs "pilotage" portés à la fois par la config et par les profils. Quand
     # l'un d'eux change (intensité collègue, seuils admin), on le propage aux
@@ -248,6 +312,9 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         now = utc_now_ts()
         # Évaluation du cycle hors-gel avant de ticker les zones
         self._tick_frost(now)
+        # Sens global du groupe extérieur pour ce tick (hors-gel > saison).
+        # Toutes les zones seront contraintes à ce sens unique (mono-mode).
+        self._current_system_direction = self._compute_system_direction()
         for zone in self._zones.values():
             # Hors-gel : forcer la direction sur les zones qui se retrouveraient
             # en IDLE / SCHEDULE_OFF alors que le cycle doit les maintenir actives.
@@ -280,6 +347,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             frost_data = data.get("frost") or {}
             self._frost_start_ts = _as_float(frost_data.get("start_ts"))
             self._frost_direction = frost_data.get("direction")
+            # Mémoire du sens auto (hystérésis saison)
+            self._season_direction = data.get("season_direction")
             self._last_runtime_payload = self._runtime_payload()
             return
 
@@ -303,6 +372,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "start_ts": self._frost_start_ts,
                 "direction": self._frost_direction,
             },
+            # Mémoire du sens auto (hystérésis saison) — survit aux restarts.
+            "season_direction": self._season_direction,
         }
 
     async def _save_runtime_state_if_changed(self) -> None:
@@ -663,6 +734,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             clim_internal_temperatures=tuple(internals),
             clim_setpoint_step=clim_setpoint_step,
             clim_internal_by_entity=internals_by_entity,
+            system_direction=self._current_system_direction,
         )
 
     def _average_temperature(self, sensors: list[str]) -> float | None:
@@ -871,6 +943,14 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "min_temp": self._frost_min_temp(),
                 "max_temp": self._frost_max_temp(),
                 "duration_min": self._frost_duration_min(),
+            },
+            # Sens global du groupe extérieur (mono-mode) : mode choisi + sens
+            # effectif appliqué à toute la flotte ('cool' | 'heat').
+            "season": {
+                "mode": self.season_mode(),
+                "direction": self._current_system_direction or self._compute_system_direction(),
+                "auto_cool_above": SEASON_AUTO_COOL_ABOVE,
+                "auto_heat_below": SEASON_AUTO_HEAT_BELOW,
             },
         }
         for zid, zone in self._zones.items():

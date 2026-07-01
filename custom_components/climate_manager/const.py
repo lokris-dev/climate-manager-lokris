@@ -43,6 +43,25 @@ DEFAULT_FROST_MIN_TEMP = 19.0   # hiver : chauffe si T° moy. bâtiment ≤ 19 �
 DEFAULT_FROST_MAX_TEMP = 28.0   # été : climatise si T° moy. bâtiment ≥ 28 °C (bâtiment armé)
 DEFAULT_FROST_DURATION_MIN = 120
 
+# Sens global du groupe extérieur (système — ConfigEntry.data).
+# TOUS les splits sont raccordés à UN seul groupe extérieur qui ne fait que froid
+# OU chaud à un instant donné (jamais les deux). Le sens n'est donc PAS une
+# décision de zone : c'est une décision bâtiment. Chaque zone ne peut ensuite
+# qu'appeler le service autorisé (climatiser/chauffer) ou rester au repos —
+# jamais partir dans le sens opposé, sinon le groupe se bloque.
+CONF_SEASON_MODE = "season_mode"
+SEASON_AUTO = "auto"       # le système choisit le sens sur la T° moyenne bâtiment
+SEASON_SUMMER = "ete"      # override manuel : force le FROID
+SEASON_WINTER = "hiver"    # override manuel : force le CHAUD
+DEFAULT_SEASON_MODE = SEASON_AUTO
+
+# Mode auto : bascule froid/chaud sur la T° moyenne bâtiment, avec une TRÈS large
+# hystérésis (un groupe mono-compresseur n'aime pas les changements de sens
+# fréquents — chaque bascule est disruptive). Entre les deux seuils, on garde le
+# dernier sens choisi (mémoire persistée dans le runtime store).
+SEASON_AUTO_COOL_ABOVE = 24.0   # T° moy. ≥ 24 °C → froid
+SEASON_AUTO_HEAT_BELOW = 20.0   # T° moy. ≤ 20 °C → chaud
+
 # Cible de zone (thermostat) : demi-bande d'hystérésis. La zone se stabilise à
 # target_temp, engage le froid au-dessus de target+bande, le chaud en-dessous
 # de target-bande. 1.0°C = réactif sans flip-flop (le pendule garde l'unité ON).
@@ -176,6 +195,16 @@ class ZoneMode:
     BOOST = "boost"
 
     ALL: ClassVar[list[str]] = [AUTO, OFF, BOOST]
+
+
+class SeasonMode:
+    """Sens global du groupe extérieur (sélecteur système)."""
+
+    AUTO = SEASON_AUTO
+    SUMMER = SEASON_SUMMER
+    WINTER = SEASON_WINTER
+
+    ALL: ClassVar[list[str]] = [AUTO, SUMMER, WINTER]
 
 
 class Power:

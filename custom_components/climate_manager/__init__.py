@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_ZONES, DOMAIN, PLATFORMS, ZoneMode
+from .const import CONF_ZONES, DOMAIN, PLATFORMS, SeasonMode, ZoneMode
 from .coordinator import DelormejClimateCoordinator
 from .zone import utc_now_ts
 
@@ -32,6 +32,7 @@ SERVICE_UPDATE_PROFILES = "update_profiles"
 SERVICE_RESET_DAILY = "reset_daily"
 SERVICE_SET_SPLIT = "set_split"
 SERVICE_SET_ZONE_TARGET = "set_zone_target"
+SERVICE_SET_SEASON_MODE = "set_season_mode"
 
 SCHEMA_ZONE_ID = vol.Schema({vol.Required("zone_id"): cv.string})
 SCHEMA_SET_MODE = vol.Schema(
@@ -61,6 +62,9 @@ SCHEMA_SET_ZONE_TARGET = vol.Schema(
         # null = réinitialise (retour aux 4 seuils classiques)
         vol.Required("target_temp"): vol.Any(None, vol.Coerce(float)),
     }
+)
+SCHEMA_SET_SEASON_MODE = vol.Schema(
+    {vol.Required("mode"): vol.In(SeasonMode.ALL)}
 )
 
 
@@ -372,6 +376,12 @@ def _register_services(hass: HomeAssistant) -> None:
         coord.update_zone_config(zone.config.zone_id, target_temp=call.data["target_temp"])
         await coord.async_tick_now()
 
+    async def _set_season_mode(call: ServiceCall) -> None:
+        """Change le sens global du groupe extérieur (auto/été/hiver) sur tous
+        les coordinators."""
+        for coord in _all_coordinators(hass):
+            await coord.async_set_season_mode(call.data["mode"])
+
     hass.services.async_register(DOMAIN, SERVICE_SET_MODE, _set_mode, schema=SCHEMA_SET_MODE)
     hass.services.async_register(DOMAIN, SERVICE_FORCE_OFF, _force_off, schema=SCHEMA_ZONE_ID)
     hass.services.async_register(
@@ -392,6 +402,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_SET_ZONE_TARGET, _set_zone_target, schema=SCHEMA_SET_ZONE_TARGET
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_SEASON_MODE, _set_season_mode, schema=SCHEMA_SET_SEASON_MODE
+    )
 
 
 def _unregister_services(hass: HomeAssistant) -> None:
@@ -399,7 +412,7 @@ def _unregister_services(hass: HomeAssistant) -> None:
         SERVICE_SET_MODE, SERVICE_FORCE_OFF, SERVICE_RESET_OVERRIDE,
         SERVICE_BOOST, SERVICE_FORCE_START, SERVICE_RELOAD_ZONES,
         SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY, SERVICE_SET_SPLIT,
-        SERVICE_SET_ZONE_TARGET,
+        SERVICE_SET_ZONE_TARGET, SERVICE_SET_SEASON_MODE,
     ):
         hass.services.async_remove(DOMAIN, service)
 

@@ -82,6 +82,9 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             # Statut système hors-gel (§2) — même valeur sur chaque zone, la carte
             # le lit sur n'importe quelle zone pour afficher la bannière.
             "frost": (self.coordinator.data or {}).get("frost"),
+            # Sens global du groupe extérieur (mono-mode) : mode + sens effectif.
+            # Même valeur sur chaque zone → la carte le lit sur n'importe laquelle.
+            "season": (self.coordinator.data or {}).get("season"),
             "cycle_history": d.get("cycle_history", []),
             "last_completed_cycle": (
                 d.get("cycle_history")[-1] if d.get("cycle_history") else None

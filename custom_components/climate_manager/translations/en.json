@@ -116,6 +116,14 @@
       }
     },
     "select": {
+      "season_mode": {
+        "name": "Season (outdoor unit direction)",
+        "state": {
+          "auto": "Auto",
+          "ete": "Summer (cooling)",
+          "hiver": "Winter (heating)"
+        }
+      },
       "zone_mode": {
         "name": "Mode",
         "state": {
