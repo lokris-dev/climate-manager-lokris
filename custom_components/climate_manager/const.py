@@ -70,7 +70,7 @@ CONF_POWER = "power"
 CONF_FAN_INTENSITY = "fan_intensity"
 
 DEFAULT_AGGRESSIVITY = "normal"
-DEFAULT_POWER = "normal"
+DEFAULT_POWER = "doux"          # intensité par défaut : douce (offset d'attaque le plus faible)
 DEFAULT_FAN_INTENSITY = "normal"
 
 # Defaults

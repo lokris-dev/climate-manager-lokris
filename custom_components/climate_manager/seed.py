@@ -113,7 +113,7 @@ def _zone_dict(
         "seuil_fin_refroidissement": float(consigne),
         "seuil_debut_chauffage": consigne - 3.0,
         "seuil_fin_chauffage": consigne - 2.0,
-        "power": "normal",
+        "power": "doux",
         "fan_intensity": "normal",
         # Boulot : la main prise par un collègue tient jusqu'au reset du matin.
         "override_until_reset": True,

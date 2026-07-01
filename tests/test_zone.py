@@ -135,7 +135,7 @@ def test_heat_setpoint_is_ABOVE_internal_temperature():
 
 
 def test_attaque_in_cool_uses_offset_attaque_below_internal():
-    zone = Zone(_config(seuil_fin_refroidissement=25.0))
+    zone = Zone(_config(seuil_fin_refroidissement=25.0, power="normal"))
     inp = _inputs(
         room_temperature=28.0,  # écart = 3 > 2 → ATTAQUE
         clim_internal_temperature=27.0,
@@ -156,7 +156,7 @@ def test_running_uses_constant_attaque_offset_close_to_target():
     offset stays at ATTAQUE throughout RUNNING — Daikin's inverter handles
     the ramp-down internally. Reproduces the bug where the descent plateaued
     when the integration switched to CROISIERE 2°C from target."""
-    zone = Zone(_config(seuil_fin_refroidissement=25.0))
+    zone = Zone(_config(seuil_fin_refroidissement=25.0, power="normal"))
     # Close to target (would have been CROISIERE in the old model)
     inp = _inputs(
         room_temperature=26.0,

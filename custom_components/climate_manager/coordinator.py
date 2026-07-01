@@ -165,12 +165,18 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self.async_request_refresh())
 
     def _persist_all_zones_power(self, power: str) -> None:
-        """Écrit le power par défaut sur toutes les zones en un seul update."""
+        """Écrit le power par défaut sur toutes les zones — niveau zone ET profils
+        (sinon un reload reconstruit les profils avec l'ancienne valeur, cf.
+        _persist_zone_config)."""
         zones = list(self.entry.options.get(CONF_ZONES, []))
         changed = False
         for i, z in enumerate(zones):
-            if z.get("power") != power:
-                zones[i] = {**z, "power": power}
+            profs = z.get("profiles") or []
+            if z.get("power") != power or any(p.get("power") != power for p in profs):
+                new_z = {**z, "power": power}
+                if profs:
+                    new_z["profiles"] = [{**p, "power": power} for p in profs]
+                zones[i] = new_z
                 changed = True
         if changed:
             new_opts = {**self.entry.options, CONF_ZONES: zones}
