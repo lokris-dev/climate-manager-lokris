@@ -815,11 +815,26 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
     # === Persistence of mutable zone config ===
 
     def _persist_zone_config(self, zone_id: str, **kwargs: Any) -> None:
-        """Save changed zone fields back to ConfigEntry.options."""
+        """Save changed zone fields back to ConfigEntry.options.
+
+        Les champs de pilotage (power, fan_intensity, seuils…) sont AUSSI
+        recopiés dans le tableau `profiles` persisté. Sinon, à chaque update
+        d'options, le listener déclenche async_reload_zones → ZoneConfig.from_dict
+        reconstruit les profils depuis leurs valeurs d'origine et écrase le
+        réglage en mémoire (bug : la ventilation choisie via le select ne
+        s'appliquait jamais au split — le profil actif restait sur l'ancienne
+        valeur alors que zone.config, lui, était bien à jour).
+        """
+        driver_updates = {k: v for k, v in kwargs.items() if k in self._DRIVER_FIELDS}
         zones = list(self.entry.options.get(CONF_ZONES, []))
         for i, z in enumerate(zones):
             if z.get("id") == zone_id:
-                zones[i] = {**z, **kwargs}
+                new_z = {**z, **kwargs}
+                if driver_updates and new_z.get("profiles"):
+                    new_z["profiles"] = [
+                        {**p, **driver_updates} for p in new_z["profiles"]
+                    ]
+                zones[i] = new_z
                 break
         new_opts = {**self.entry.options, CONF_ZONES: zones}
         self.hass.config_entries.async_update_entry(self.entry, options=new_opts)

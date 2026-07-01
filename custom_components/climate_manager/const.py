@@ -38,9 +38,9 @@ CONF_FROST_MIN_TEMP = "frost_min_temp"       # °C : déclenche le chauffage si 
 CONF_FROST_MAX_TEMP = "frost_max_temp"       # °C : déclenche la climatisation si T° moy. ≥ ce seuil
 CONF_FROST_DURATION_MIN = "frost_duration_min"  # durée FIXE du cycle hors-gel (minutes)
 
-DEFAULT_FROST_PROTECTION_ENABLED = False
-DEFAULT_FROST_MIN_TEMP = 8.0
-DEFAULT_FROST_MAX_TEMP = 32.0
+DEFAULT_FROST_PROTECTION_ENABLED = True
+DEFAULT_FROST_MIN_TEMP = 19.0   # hiver : chauffe si T° moy. bâtiment ≤ 19 °C (bâtiment armé)
+DEFAULT_FROST_MAX_TEMP = 28.0   # été : climatise si T° moy. bâtiment ≥ 28 °C (bâtiment armé)
 DEFAULT_FROST_DURATION_MIN = 120
 
 # Cible de zone (thermostat) : demi-bande d'hystérésis. La zone se stabilise à

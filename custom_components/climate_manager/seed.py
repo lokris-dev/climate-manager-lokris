@@ -130,12 +130,12 @@ def seed_zones() -> list[dict[str, Any]]:
 
 # Config système LOKRIS à fusionner dans ConfigEntry.data au setup initial.
 # pendulum_idle=True → régulation continue sans on/off (§1).
-# La protection hors-gel est désactivée par défaut (activable dans les options) ;
-# les seuils restent aux valeurs standards du bâtiment.
+# Protection hors-gel ACTIVE : maintient le bâtiment armé entre 19 °C (hiver)
+# et 28 °C (été) — chauffe sous 19, climatise au-dessus de 28.
 SEED_SYSTEM: dict[str, Any] = {
     "pendulum_idle": True,
-    "frost_protection_enabled": False,
-    "frost_min_temp": 8.0,
-    "frost_max_temp": 32.0,
+    "frost_protection_enabled": True,
+    "frost_min_temp": 19.0,
+    "frost_max_temp": 28.0,
     "frost_duration_min": 120,
 }

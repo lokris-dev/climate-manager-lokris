@@ -273,7 +273,7 @@ class DelormejClimateOptionsFlow(OptionsFlow):
                     CONF_FROST_MIN_TEMP,
                     default=current.get(CONF_FROST_MIN_TEMP, DEFAULT_FROST_MIN_TEMP),
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0.0, max=15.0, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(min=0.0, max=25.0, step=0.5, unit_of_measurement="°C")
                 ),
                 vol.Optional(
                     CONF_FROST_MAX_TEMP,
