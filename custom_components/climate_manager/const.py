@@ -32,6 +32,14 @@ CONF_CONTROL_ENABLED = "control_enabled"
 CONF_PENDULUM_IDLE = "pendulum_idle"
 DEFAULT_PENDULUM_IDLE = False
 
+# Prise-en-main manuelle : jusqu'au reset du matin (True) plutôt qu'un timer.
+# Clé par zone (chaque zone seed la fixe explicitement à True) ET défaut système
+# du fork LOKRIS : les zones qui ne la fixent PAS (typiquement celles créées via
+# le flow d'options, qui n'exposent pas ce flag) héritent de DEFAULT_OVERRIDE_
+# UNTIL_RESET. Peut être surchargé globalement via ConfigEntry.data.
+CONF_OVERRIDE_UNTIL_RESET = "override_until_reset"
+DEFAULT_OVERRIDE_UNTIL_RESET = True
+
 # Protection hors-gel (système — ConfigEntry.data, pas par zone)
 CONF_FROST_PROTECTION_ENABLED = "frost_protection_enabled"
 CONF_FROST_MIN_TEMP = "frost_min_temp"       # °C : déclenche le chauffage si T° moy. ≤ ce seuil

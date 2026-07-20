@@ -25,6 +25,7 @@ from .const import (
     CONF_FROST_MAX_TEMP,
     CONF_FROST_MIN_TEMP,
     CONF_FROST_PROTECTION_ENABLED,
+    CONF_OVERRIDE_UNTIL_RESET,
     CONF_PENDULUM_IDLE,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
@@ -34,6 +35,7 @@ from .const import (
     DEFAULT_FROST_MAX_TEMP,
     DEFAULT_FROST_MIN_TEMP,
     DEFAULT_FROST_PROTECTION_ENABLED,
+    DEFAULT_OVERRIDE_UNTIL_RESET,
     DEFAULT_PENDULUM_IDLE,
     DEFAULT_POWER,
     DEFAULT_SEASON_MODE,
@@ -401,11 +403,21 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         pendulum_idle = bool(
             self.entry.data.get(CONF_PENDULUM_IDLE, DEFAULT_PENDULUM_IDLE)
         )
+        # Défaut fork LOKRIS : override jusqu'au reset du matin. from_dict retombe
+        # sur False quand la clé est absente (comportement maison) ; on la force au
+        # défaut fork pour les zones qui ne la fixent PAS explicitement (ex. zones
+        # créées via le flow d'options, qui n'expose pas ce flag). Les zones seed
+        # la portent déjà à True et ne sont pas touchées.
+        override_until_reset_default = bool(
+            self.entry.data.get(CONF_OVERRIDE_UNTIL_RESET, DEFAULT_OVERRIDE_UNTIL_RESET)
+        )
         zones_cfg = self.entry.options.get(CONF_ZONES, [])
         new_zones: dict[str, Zone] = {}
         for cfg_dict in zones_cfg:
             zc = ZoneConfig.from_dict(cfg_dict)
             zc.pendulum_idle = pendulum_idle  # flag système → toutes les zones
+            if CONF_OVERRIDE_UNTIL_RESET not in cfg_dict:
+                zc.override_until_reset = override_until_reset_default
             existing = self._zones.get(zc.zone_id)
             new_zones[zc.zone_id] = Zone(
                 zc, state=existing.state if existing else ZoneRuntimeState()
