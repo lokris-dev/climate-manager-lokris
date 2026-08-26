@@ -70,6 +70,41 @@ DEFAULT_SEASON_MODE = SEASON_AUTO
 SEASON_AUTO_COOL_ABOVE = 24.0   # T° moy. ≥ 24 °C → froid
 SEASON_AUTO_HEAT_BELOW = 20.0   # T° moy. ≤ 20 °C → chaud
 
+# === Pré-refroidissement matinal (système — ConfigEntry.data) ===
+#
+# Problème résolu (analyse du 2026-08-26) : le gating par l'alarme coupe TOUT le
+# bâtiment de ~18h à ~8h. Les bureaux du secteur chaud (Baptiste, Jonathan,
+# Openspace, Salle Appel, Détente/Dev) passent la nuit à 26-27 °C avec des pics
+# à 29-30 °C et les collègues arrivent à 26.2 °C, contre 23.4 °C au Bureau RDC.
+# Le hors-gel aurait pu servir, mais il se déclenche sur la MOYENNE bâtiment,
+# diluée par les pièces déjà fraîches : sur 10 nuits mesurées il n'a franchi le
+# seuil de 28 °C qu'une seule fois.
+#
+# Le pré-refroidissement est donc une exception de gating CIBLÉE : sur une
+# fenêtre horaire locale et une liste de zones explicites, `system_enabled` est
+# forcé à True même bâtiment armé. Les zones régulent alors normalement (pendule
+# inclus) vers `precool_target_temp` — ou leur propre cible si elle n'est pas
+# renseignée. Hors fenêtre, le gating reprend et coupe les splits.
+CONF_PRECOOL_ENABLED = "precool_enabled"
+CONF_PRECOOL_START_HOUR = "precool_start_hour"    # heure LOCALE de début (float, 4.0 = 04:00)
+CONF_PRECOOL_END_HOUR = "precool_end_hour"        # heure LOCALE de fin (float, 8.0 = 08:00)
+CONF_PRECOOL_TARGET_TEMP = "precool_target_temp"  # °C ; None = cible propre de chaque zone
+CONF_PRECOOL_WEEKDAYS = "precool_weekdays"        # list[int], 0 = lundi (jour d'OUVERTURE de la fenêtre)
+
+DEFAULT_PRECOOL_ENABLED = False
+DEFAULT_PRECOOL_START_HOUR = 4.0
+DEFAULT_PRECOOL_END_HOUR = 8.0
+# Lun-ven : on prépare les matins ouvrés, pas le week-end pour un bâtiment vide.
+DEFAULT_PRECOOL_WEEKDAYS: list[int] = [0, 1, 2, 3, 4]
+
+# Clé PAR ZONE : cette zone échappe-t-elle au gating pendant la fenêtre ?
+# Portée par ZoneConfig (persistée dans entry.options), pilotable depuis la carte
+# et depuis une entité switch dédiée. La fenêtre, elle, reste système : un seul
+# groupe extérieur, donc démarrer les zones à des heures différentes ne ferait
+# que multiplier les cycles du compresseur.
+CONF_ZONE_PRECOOL = "precool"
+DEFAULT_ZONE_PRECOOL = False
+
 # Cible de zone (thermostat) : demi-bande d'hystérésis. La zone se stabilise à
 # target_temp, engage le froid au-dessus de target+bande, le chaud en-dessous
 # de target-bande. 1.0°C = réactif sans flip-flop (le pendule garde l'unité ON).

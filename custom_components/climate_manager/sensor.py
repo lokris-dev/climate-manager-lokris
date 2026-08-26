@@ -86,6 +86,12 @@ class ZoneStateSensor(DelormejClimateZoneEntity, SensorEntity):
             # Sens global du groupe extérieur (mono-mode) : mode + sens effectif.
             # Même valeur sur chaque zone → la carte le lit sur n'importe laquelle.
             "season": (self.coordinator.data or {}).get("season"),
+            # Pré-refroidissement matinal : le flag PAR ZONE (périmètre) et,
+            # sous une clé distincte pour éviter toute ambiguïté, les réglages
+            # SYSTEME de la fenêtre — identiques sur chaque zone.
+            "precool": d.get("precool", False),
+            "precool_running": d.get("precool_running", False),
+            "precool_system": (self.coordinator.data or {}).get("precool"),
             "cycle_history": d.get("cycle_history", []),
             "last_completed_cycle": (
                 d.get("cycle_history")[-1] if d.get("cycle_history") else None

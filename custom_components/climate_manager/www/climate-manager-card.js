@@ -295,6 +295,9 @@ class ClimateManagerCard extends HTMLElement {
         season: a.season || null,
         inOverride: !!a.in_override,
         overrideUntilReset: !!a.override_until_reset,
+        precool: !!a.precool,                        // périmètre : cette zone est-elle pré-refroidie ?
+        precoolRunning: !!a.precool_running,         // ... et est-ce en train de tourner ?
+        precoolSystem: a.precool_system || null,     // fenêtre + activation, réglages système
         overrideUntil: hass.states[k.zone_override_until]?.state,
         houseAbsent: !!a.house_is_absent,
         on: sw ? sw.state === "on" : true,
@@ -513,7 +516,7 @@ class ClimateManagerCard extends HTMLElement {
           <div class="cm-ctl" ${cdis}><span class="cm-ctl-lbl">Ventilation</span><div class="cm-seg">${fanSeg}</div></div>
           ${swSeg ? `<div class="cm-ctl" ${cdis}><span class="cm-ctl-lbl">Balayage</span><div class="cm-seg">${swSeg}</div></div>` : ""}
         </div>
-        ${z.splits.length > 1 ? this._perSplitAdvanced(z, observe) : ""}
+        ${this._zoneAdvanced(z, observe)}
         ${settings}
       </div>`;
   }
@@ -560,15 +563,46 @@ class ClimateManagerCard extends HTMLElement {
   // cible/puissance/balayage peuvent différer d'un split à l'autre). Les
   // contrôles zone (intensité, ventilation, balayage) restent au-dessus ; ceci
   // n'est qu'un panneau repliable pour affiner split par split.
-  _perSplitAdvanced(z, observe) {
-    if (z.splits.length <= 1) return "";
+  // Panneau repliable « Options » — présent sur TOUTES les zones (le
+  // pré-refroidissement se règle par zone), enrichi du réglage par clim quand
+  // la zone pilote plusieurs splits.
+  _zoneAdvanced(z, observe) {
     const open = this._openSplits.has(z.id) ? "open" : "";
     const dis = observe ? 'data-disabled="1"' : "";
-    const rows = z.splits.map((s) => this._splitRow(z, s, dis)).join("");
+    const multi = z.splits.length > 1;
+    const rows = multi ? z.splits.map((s) => this._splitRow(z, s, dis)).join("") : "";
+    const label = multi ? `Options · réglage par clim (${z.splits.length})` : "Options";
     return `<details class="cm-opt" ${open} data-zone="${esc(z.id)}">
-        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">Réglage par clim (${z.splits.length})</summary>
+        <summary data-act="toggle-splits" data-zone="${esc(z.id)}">${label}</summary>
+        ${this._precoolRow(z, dis)}
         ${rows}
       </details>`;
+  }
+
+  // Pré-refroidissement matinal : périmètre par zone. La fenêtre horaire est un
+  // réglage système (Configurer -> System) — on ne fait que la rappeler ici pour
+  // que le toggle ne soit pas une case à cocher sans contexte.
+  _precoolRow(z, dis) {
+    const sys = z.precoolSystem || {};
+    // Libellé court (la colonne meta est en nowrap) : la fenêtre, ou l'état
+    // quand un cycle tourne. La cible reste un réglage système, pas rappelé ici.
+    const h = (v) => (v == null ? "?" : `${String(Math.floor(v)).padStart(2, "0")}h${v % 1 ? "30" : ""}`);
+    let hint;
+    if (!sys.enabled) hint = "coupé (système)";
+    else if (z.precool && z.precoolRunning) hint = "en cours";
+    else hint = `${h(sys.start_hour)}-${h(sys.end_hour)}`;
+    const seg = [["0", "Non"], ["1", "Oui"]]
+      .map(
+        ([val, lbl]) =>
+          `<button data-act="zone-precool" data-zone="${esc(z.id)}" data-opt="${val}" class="${(z.precool ? "1" : "0") === val ? "sel" : ""}">${lbl}</button>`
+      )
+      .join("");
+    return `
+      <div class="cm-split cm-precool" ${dis}>
+        <div class="nm"><b>Pré-refroidissement matinal</b><span class="meta">${esc(hint)}</span></div>
+        <label>Actif</label>
+        <div class="cm-seg cm-seg-sm">${seg}</div>
+      </div>`;
   }
 
   _splitRow(z, s, dis) {
@@ -789,6 +823,11 @@ class ClimateManagerCard extends HTMLElement {
         break;
       case "season":
         this._call("climate_manager", "set_season_mode", { mode: el.dataset.opt });
+        break;
+      case "zone-precool":
+        this._call("climate_manager", "set_zone_precool", {
+          zone_id: el.dataset.zone, enabled: el.dataset.opt === "1",
+        });
         break;
       case "more-info":
         // Ouvre la fenêtre native Home Assistant (avec le graphe d'historique).

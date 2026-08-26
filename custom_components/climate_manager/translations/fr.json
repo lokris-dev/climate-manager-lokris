@@ -41,7 +41,11 @@
           "window_sensors": "Capteurs de fenêtres (optionnel)",
           "duree_stabilisation_min": "Durée stabilisation",
           "duree_cooldown_min": "Durée cooldown",
-          "override_duree_min": "Durée override manuel"
+          "override_duree_min": "Durée override manuel",
+          "precool": "Pré-refroidissement matinal"
+        },
+        "data_description": {
+          "precool": "Cette zone régule pendant la fenêtre matinale même quand l'alarme est armée."
         }
       },
       "edit_zone": {
@@ -60,13 +64,31 @@
           "window_sensors": "Capteurs de fenêtres (optionnel)",
           "duree_stabilisation_min": "Durée stabilisation",
           "duree_cooldown_min": "Durée cooldown",
-          "override_duree_min": "Durée override manuel"
+          "override_duree_min": "Durée override manuel",
+          "precool": "Pré-refroidissement matinal"
+        },
+        "data_description": {
+          "precool": "Cette zone régule pendant la fenêtre matinale même quand l'alarme est armée."
         }
       },
       "remove_zone": {
         "title": "Supprimer une zone",
         "data": {
           "zone_id": "Zone à supprimer"
+        }
+      },
+      "system": {
+        "data": {
+          "precool_enabled": "Pré-refroidissement matinal",
+          "precool_start_hour": "Début de la fenêtre (h)",
+          "precool_end_hour": "Fin de la fenêtre (h)",
+          "precool_target_temp": "Cible pendant la fenêtre (°C, vide = cible de zone)",
+          "precool_weekdays": "Jours (jour d'ouverture de la fenêtre)"
+        },
+        "data_description": {
+          "precool_enabled": "Fenêtre commune à tout le bâtiment. Le périmètre, lui, se règle zone par zone (interrupteur « Pré-refroidissement matinal » de chaque zone).",
+          "precool_target_temp": "Laisser vide pour que chaque zone vise sa propre cible.",
+          "precool_weekdays": "0 = lundi. Pour une fenêtre à cheval sur minuit, c'est le jour où elle s'ouvre."
         }
       }
     },
@@ -116,6 +138,12 @@
       },
       "control_enabled": {
         "name": "Pilotage actif"
+      },
+      "precool_enabled": {
+        "name": "Pré-refroidissement matinal"
+      },
+      "zone_precool": {
+        "name": "Pré-refroidissement matinal"
       }
     },
     "select": {

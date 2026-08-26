@@ -18,6 +18,7 @@ from homeassistant.core import Context, Event, EventStateChangedData, HomeAssist
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CONTROL_ENABLED,
@@ -27,6 +28,11 @@ from .const import (
     CONF_FROST_PROTECTION_ENABLED,
     CONF_OVERRIDE_UNTIL_RESET,
     CONF_PENDULUM_IDLE,
+    CONF_PRECOOL_ENABLED,
+    CONF_PRECOOL_END_HOUR,
+    CONF_PRECOOL_START_HOUR,
+    CONF_PRECOOL_TARGET_TEMP,
+    CONF_PRECOOL_WEEKDAYS,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
     CONF_SEASON_MODE,
@@ -38,6 +44,10 @@ from .const import (
     DEFAULT_OVERRIDE_UNTIL_RESET,
     DEFAULT_PENDULUM_IDLE,
     DEFAULT_POWER,
+    DEFAULT_PRECOOL_ENABLED,
+    DEFAULT_PRECOOL_END_HOUR,
+    DEFAULT_PRECOOL_START_HOUR,
+    DEFAULT_PRECOOL_WEEKDAYS,
     DEFAULT_SEASON_MODE,
     DEFAULT_SETPOINT_STEP,
     DOMAIN,
@@ -110,6 +120,11 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         # effectif du tick courant (saison ou hors-gel), injecté dans les zones.
         self._season_direction: str | None = None      # 'heat' | 'cool' (mémoire auto)
         self._current_system_direction: str | None = None
+        # Pré-refroidissement matinal : fenêtre ouverte au tick courant, et
+        # mémoire du tick précédent pour détecter le FRONT d'ouverture (qui
+        # déclenche le reset des zones concernées).
+        self._precool_window_open: bool = False
+        self._precool_window_was_open: bool = False
         self._rebuild_zones()
 
     # === Public API for platforms ===
@@ -157,6 +172,33 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             self.entry, data={**self.entry.data, CONF_SEASON_MODE: mode}
         )
         await self.async_request_refresh()
+
+    async def async_set_precool_enabled(self, enabled: bool) -> None:
+        """Active/désactive le pré-refroidissement matinal (interrupteur système)."""
+        if bool(enabled) == self._precool_enabled():
+            return
+        self.hass.config_entries.async_update_entry(
+            self.entry, data={**self.entry.data, CONF_PRECOOL_ENABLED: bool(enabled)}
+        )
+        await self.async_request_refresh()
+
+    async def async_set_zone_precool(self, zone_id: str, enabled: bool) -> None:
+        """Active/désactive le pré-refroidissement POUR UNE ZONE (interrupteur de
+        zone + toggle de la carte). Persisté dans entry.options comme les autres
+        réglages de zone."""
+        zone = self._zones.get(zone_id)
+        if zone is None or zone.config.precool == bool(enabled):
+            return
+        self.update_zone_config(zone_id, precool=bool(enabled))
+        await self.async_request_refresh()
+
+    def precool_enabled(self) -> bool:
+        """Exposé aux plateformes (switch)."""
+        return self._precool_enabled()
+
+    def precool_window_open(self) -> bool:
+        """Fenêtre de pré-refroidissement ouverte au dernier tick évalué."""
+        return self._precool_window_open
 
     def _resolve_season_direction(self) -> str:
         """Sens dicté par la saison ('cool' | 'heat').
@@ -311,11 +353,16 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         """Tick all zones — sauf en mode observation où on se contente de lire."""
         if not self.control_enabled():
             # Aucune mutation d'état, aucune commande : la carte reflète juste
-            # les températures et l'état réel des splits.
+            # les températures et l'état réel des splits. On réévalue quand même
+            # la fenêtre de pré-refroidissement (calcul pur) pour que l'affichage
+            # ne mente pas, mais SANS le reset du front d'ouverture.
+            self._precool_window_open = self._compute_precool_window()
             return self._build_coordinator_data()
         now = utc_now_ts()
         # Évaluation du cycle hors-gel avant de ticker les zones
         self._tick_frost(now)
+        # Fenêtre de pré-refroidissement matinal (+ reset sur front d'ouverture)
+        self._tick_precool(now)
         # Sens global du groupe extérieur pour ce tick (hors-gel > saison).
         # Toutes les zones seront contraintes à ce sens unique (mono-mode).
         self._current_system_direction = self._compute_system_direction()
@@ -726,8 +773,14 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         active_profile = self._active_profile(zone)
         # Gating boulot : le système n'est actif que lorsque l'alarme est
         # désarmée (bâtiment occupé). Armée → schedule_off → splits coupés.
-        # Exception : cycle hors-gel (§2) → system_enabled forcé à True.
-        system_enabled = not self._house_is_absent() or self._frost_active()
+        # Exceptions : cycle hors-gel (§2) et pré-refroidissement matinal, qui
+        # forcent system_enabled à True bâtiment armé — le premier pour tout le
+        # bâtiment, le second uniquement pour les zones listées.
+        precool = self._precool_active_for(zone)
+        system_enabled = not self._house_is_absent() or self._frost_active() or precool
+        # Pendant le pré-refroidissement, la cible configurée prime sur celle de
+        # la zone (None = la zone garde la sienne).
+        target_override = self._precool_target_temp() if precool else None
         return ZoneInputs(
             now_ts=now,
             room_temperature=room_temperature,
@@ -749,6 +802,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             clim_setpoint_step=clim_setpoint_step,
             clim_internal_by_entity=internals_by_entity,
             system_direction=self._current_system_direction,
+            target_override=target_override,
         )
 
     def _average_temperature(self, sensors: list[str]) -> float | None:
@@ -893,6 +947,107 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         if zone.state.state in passive_states:
             zone.force_start(direction, now)
 
+    # === Pré-refroidissement matinal ===
+
+    def _precool_enabled(self) -> bool:
+        return bool(self.entry.data.get(CONF_PRECOOL_ENABLED, DEFAULT_PRECOOL_ENABLED))
+
+    def _precool_start_hour(self) -> float:
+        return float(self.entry.data.get(CONF_PRECOOL_START_HOUR, DEFAULT_PRECOOL_START_HOUR))
+
+    def _precool_end_hour(self) -> float:
+        return float(self.entry.data.get(CONF_PRECOOL_END_HOUR, DEFAULT_PRECOOL_END_HOUR))
+
+    def _precool_target_temp(self) -> float | None:
+        """Cible imposée pendant la fenêtre. None = chaque zone garde la sienne."""
+        raw = self.entry.data.get(CONF_PRECOOL_TARGET_TEMP)
+        return _as_float(raw)
+
+    def _precool_zone_ids(self) -> list[str]:
+        """Zones qui portent le flag `precool` (interrupteur par zone)."""
+        return [zid for zid, zone in self._zones.items() if zone.config.precool]
+
+    def _precool_weekdays(self) -> list[int]:
+        raw = self.entry.data.get(CONF_PRECOOL_WEEKDAYS)
+        if raw is None:
+            return list(DEFAULT_PRECOOL_WEEKDAYS)
+        out: list[int] = []
+        for d in raw:
+            try:
+                out.append(int(d))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _compute_precool_window(self, now_local: Any | None = None) -> bool:
+        """La fenêtre de pré-refroidissement est-elle ouverte à cet instant ?
+
+        Heure LOCALE (dt_util.now()), pas UTC : une fenêtre « 4h-8h » doit
+        rester 4h-8h à l'heure du bâtiment quel que soit le décalage saisonnier.
+
+        Le filtre par jour porte sur le jour d'OUVERTURE de la fenêtre : pour une
+        fenêtre qui enjambe minuit (ex. 22h→7h), les heures d'après-minuit sont
+        rattachées à la veille — « nuit du lundi » = lundi 22h → mardi 7h.
+        """
+        if not self._precool_enabled() or not self._precool_zone_ids():
+            return False
+        start = self._precool_start_hour()
+        end = self._precool_end_hour()
+        if start == end:
+            return False
+        now_local = now_local or dt_util.now()
+        h = now_local.hour + now_local.minute / 60.0
+        if start < end:
+            in_window = start <= h < end
+            anchor_day = now_local.weekday()
+        else:  # fenêtre à cheval sur minuit
+            in_window = h >= start or h < end
+            anchor_day = now_local.weekday() if h >= start else (now_local.weekday() - 1) % 7
+        return in_window and anchor_day in self._precool_weekdays()
+
+    def _precool_active_for(self, zone: Zone) -> bool:
+        """Cette zone doit-elle être pilotée malgré le gating, à ce tick ?
+
+        Deux conditions : la fenêtre système est ouverte, et la zone porte le
+        flag `precool` (son interrupteur dédié).
+
+        Restreint au sens FROID : le groupe extérieur est mono-mode, et en hiver
+        `_compute_system_direction` renvoie 'heat' — laisser passer voudrait dire
+        pré-CHAUFFER les bureaux à 4h du matin, ce qui n'est pas ce qu'on a
+        demandé. La fonctionnalité se neutralise donc d'elle-même hors saison
+        chaude, sans réglage supplémentaire.
+        """
+        if not self._precool_window_open:
+            return False
+        if not zone.config.precool:
+            return False
+        direction = self._current_system_direction or self._compute_system_direction()
+        return direction == "cool"
+
+    def _tick_precool(self, now: float) -> None:
+        """Réévalue la fenêtre et, sur le FRONT d'ouverture, remet les zones
+        concernées à zéro.
+
+        Sans ce reset, une zone qu'un collègue a coupée la veille (mode OFF, qui
+        tient « jusqu'au reset du matin ») resterait éteinte pendant toute la
+        fenêtre : le pré-refroidissement ne servirait à rien précisément les
+        matins où la pièce en a le plus besoin. L'ouverture de la fenêtre EST le
+        matin — on y applique donc le reset quotidien, restreint aux zones
+        concernées (le reset global au désarmement reste inchangé).
+        """
+        self._precool_window_open = self._compute_precool_window()
+        if self._precool_window_open and not self._precool_window_was_open:
+            ids = self._precool_zone_ids()
+            _LOGGER.info(
+                "Pré-refroidissement : ouverture de la fenêtre %sh-%sh → reset de %d zone(s)",
+                self._precool_start_hour(), self._precool_end_hour(), len(ids),
+            )
+            for zid in ids:
+                zone = self._zones.get(zid)
+                if zone is not None:
+                    zone.daily_reset(now)
+        self._precool_window_was_open = self._precool_window_open
+
     def _building_avg_temperature(self) -> float | None:
         """Température moyenne de toutes les sondes de pièce de toutes les zones."""
         all_sensors: list[str] = []
@@ -965,6 +1120,16 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "direction": self._current_system_direction or self._compute_system_direction(),
                 "auto_cool_above": SEASON_AUTO_COOL_ABOVE,
                 "auto_heat_below": SEASON_AUTO_HEAT_BELOW,
+            },
+            # Pré-refroidissement matinal : réglages + fenêtre ouverte ou non.
+            "precool": {
+                "enabled": self._precool_enabled(),
+                "active": self._precool_window_open,
+                "start_hour": self._precool_start_hour(),
+                "end_hour": self._precool_end_hour(),
+                "target_temp": self._precool_target_temp(),
+                "weekdays": self._precool_weekdays(),
+                "zones": self._precool_zone_ids(),
             },
         }
         for zid, zone in self._zones.items():
@@ -1070,6 +1235,10 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 "splits": self._build_splits_data(zone, inputs),
                 # Direction pendule verrouillée (§1)
                 "active_direction": zone.state.active_direction,
+                # Pré-refroidissement : flag de la zone + est-il en train de
+                # s'appliquer à ce tick (fenêtre ouverte ET sens froid) ?
+                "precool": zone.config.precool,
+                "precool_running": self._precool_active_for(zone),
             }
         return out
 

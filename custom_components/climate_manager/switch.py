@@ -21,8 +21,9 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coord: DelormejClimateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SwitchEntity] = [ControlEnabledSwitch(coord)]
+    entities: list[SwitchEntity] = [ControlEnabledSwitch(coord), PrecoolEnabledSwitch(coord)]
     entities.extend(ZoneAutoSwitch(coord, zid) for zid in coord.zones)
+    entities.extend(ZonePrecoolSwitch(coord, zid) for zid in coord.zones)
     async_add_entities(entities)
 
 
@@ -48,6 +49,42 @@ class ControlEnabledSwitch(CoordinatorEntity[DelormejClimateCoordinator], Switch
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_set_control_enabled(False)
+
+
+class PrecoolEnabledSwitch(CoordinatorEntity[DelormejClimateCoordinator], SwitchEntity):
+    """Pré-refroidissement matinal : laisse les zones listées réguler pendant la
+    fenêtre horaire configurée, alarme armée. OFF = gating normal (tout coupé)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "precool_enabled"
+    _attr_icon = "mdi:weather-sunset-up"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coord: DelormejClimateCoordinator) -> None:
+        super().__init__(coord)
+        self._attr_unique_id = f"{coord.entry.entry_id}_precool_enabled"
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.precool_enabled()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = (self.coordinator.data or {}).get("precool") or {}
+        return {
+            "fenetre_ouverte": data.get("active"),
+            "debut_h": data.get("start_hour"),
+            "fin_h": data.get("end_hour"),
+            "cible": data.get("target_temp"),
+            "jours": data.get("weekdays"),
+            "zones": data.get("zones"),
+        }
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_precool_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_precool_enabled(False)
 
 
 class ZoneAutoSwitch(DelormejClimateZoneEntity, SwitchEntity):
@@ -77,3 +114,44 @@ class ZoneAutoSwitch(DelormejClimateZoneEntity, SwitchEntity):
             return
         zone.set_mode(ZoneMode.OFF, utc_now_ts())
         await self.coordinator.async_tick_now()
+
+
+class ZonePrecoolSwitch(DelormejClimateZoneEntity, SwitchEntity):
+    """Pré-refroidissement matinal pour CETTE zone.
+
+    ON = la zone échappe au gating par l'alarme pendant la fenêtre système
+    (Configurer -> System) et régule normalement, bâtiment armé. Réglage
+    d'administration : catégorie config, donc masqué du dashboard collègues.
+    """
+
+    _attr_translation_key = "zone_precool"
+    _attr_icon = "mdi:weather-sunset-up"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coord: DelormejClimateCoordinator, zone_id: str) -> None:
+        super().__init__(coord, zone_id, "precool")
+
+    @property
+    def is_on(self) -> bool | None:
+        d = self._zone_data
+        if not d:
+            return None
+        return bool(d.get("precool"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        d = self._zone_data or {}
+        systeme = (self.coordinator.data or {}).get("precool") or {}
+        return {
+            # Vrai seulement si la fenêtre est ouverte ET le sens du groupe est
+            # au froid : c'est ce qui distingue « armé » de « en train de tourner ».
+            "en_cours": d.get("precool_running"),
+            "fenetre_ouverte": systeme.get("active"),
+            "systeme_actif": systeme.get("enabled"),
+        }
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_zone_precool(self._zone_id, True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_zone_precool(self._zone_id, False)

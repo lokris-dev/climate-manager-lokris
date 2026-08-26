@@ -32,6 +32,7 @@ from .const import (
     BOOST_OFFSET,
     CLIM_MAX_SETPOINT,
     CLIM_MIN_SETPOINT,
+    CONF_ZONE_PRECOOL,
     DEFAULT_AGGRESSIVITY,
     DEFAULT_DUREE_COOLDOWN_MIN,
     DEFAULT_DUREE_STABILISATION_MIN,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_SEUIL_FIN_REFROIDISSEMENT,
     DEFAULT_SWING_MODE,
     DEFAULT_TARGET_DEADBAND,
+    DEFAULT_ZONE_PRECOOL,
     FAN_PROFILES,
     POWER_PROFILES,
     RATE_LIMIT_SECONDS,
@@ -108,6 +110,11 @@ class ZoneInputs:
     # (ou rester au repos), jamais l'opposé. None = pas de contrainte (tests /
     # rétro-compat) → la zone décide librement les deux sens (ancien comportement).
     system_direction: str | None = None
+    # Cible imposée par le système pour ce tick, court-circuitant
+    # `ZoneConfig.target_temp` (pré-refroidissement matinal). None = la zone
+    # utilise sa propre cible. Les 4 seuils en sont dérivés comme d'habitude via
+    # _apply_target_temp, donc toute la logique (pendule, splits) suit.
+    target_override: float | None = None
 
 
 @dataclass(frozen=True)
@@ -349,6 +356,10 @@ class ZoneConfig:
     # le froid au-dessus de target+bande / le chaud en-dessous de target-bande.
     # None = on garde les 4 seuils configurés (comportement historique).
     target_temp: float | None = None
+    # Pré-refroidissement matinal : cette zone échappe-t-elle au gating par
+    # l'alarme pendant la fenêtre système ? Réglage PAR ZONE (interrupteur dédié
+    # + toggle dans la carte) — la fenêtre horaire, elle, est système.
+    precool: bool = DEFAULT_ZONE_PRECOOL
 
     def __post_init__(self) -> None:
         # Normalise le couple climate_entity / climate_entities pour que les deux
@@ -416,6 +427,7 @@ class ZoneConfig:
                 if d.get("target_temp") is not None
                 else None
             ),
+            precool=bool(d.get(CONF_ZONE_PRECOOL, DEFAULT_ZONE_PRECOOL)),
         )
 
 
@@ -801,9 +813,13 @@ class Zone:
         Si la zone a une `target_temp` (thermostat), on dérive les 4 seuils du
         profil à partir d'elle pour que toute la logique (décision, pendule,
         relâchement, héritage des splits) s'appuie sur la cible unique.
+        `inp.target_override` (pré-refroidissement) prime sur la cible de zone.
         """
         prof = inp.active_profile or self.config.profiles[0]
-        return _apply_target_temp(prof, self.config.target_temp)
+        target = inp.target_override
+        if target is None:
+            target = self.config.target_temp
+        return _apply_target_temp(prof, target)
 
     def _decide(self, inp: ZoneInputs) -> None:
         """Pure decision logic (IDLE -> STARTING) based on room sensor + thresholds."""

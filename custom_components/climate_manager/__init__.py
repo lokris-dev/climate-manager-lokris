@@ -33,6 +33,7 @@ SERVICE_RESET_DAILY = "reset_daily"
 SERVICE_SET_SPLIT = "set_split"
 SERVICE_SET_ZONE_TARGET = "set_zone_target"
 SERVICE_SET_SEASON_MODE = "set_season_mode"
+SERVICE_SET_ZONE_PRECOOL = "set_zone_precool"
 
 SCHEMA_ZONE_ID = vol.Schema({vol.Required("zone_id"): cv.string})
 SCHEMA_SET_MODE = vol.Schema(
@@ -65,6 +66,12 @@ SCHEMA_SET_ZONE_TARGET = vol.Schema(
 )
 SCHEMA_SET_SEASON_MODE = vol.Schema(
     {vol.Required("mode"): vol.In(SeasonMode.ALL)}
+)
+SCHEMA_SET_ZONE_PRECOOL = vol.Schema(
+    {
+        vol.Required("zone_id"): cv.string,
+        vol.Required("enabled"): cv.boolean,
+    }
 )
 
 
@@ -376,6 +383,14 @@ def _register_services(hass: HomeAssistant) -> None:
         coord.update_zone_config(zone.config.zone_id, target_temp=call.data["target_temp"])
         await coord.async_tick_now()
 
+    async def _set_zone_precool(call: ServiceCall) -> None:
+        """Active/désactive le pré-refroidissement matinal pour une zone."""
+        coord, zone = _find_zone(hass, call.data["zone_id"])
+        if zone is None:
+            _LOGGER.warning("set_zone_precool: zone %r not found", call.data["zone_id"])
+            return
+        await coord.async_set_zone_precool(zone.config.zone_id, call.data["enabled"])
+
     async def _set_season_mode(call: ServiceCall) -> None:
         """Change le sens global du groupe extérieur (auto/été/hiver) sur tous
         les coordinators."""
@@ -405,6 +420,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_SET_SEASON_MODE, _set_season_mode, schema=SCHEMA_SET_SEASON_MODE
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_ZONE_PRECOOL, _set_zone_precool, schema=SCHEMA_SET_ZONE_PRECOOL
+    )
 
 
 def _unregister_services(hass: HomeAssistant) -> None:
@@ -412,7 +430,7 @@ def _unregister_services(hass: HomeAssistant) -> None:
         SERVICE_SET_MODE, SERVICE_FORCE_OFF, SERVICE_RESET_OVERRIDE,
         SERVICE_BOOST, SERVICE_FORCE_START, SERVICE_RELOAD_ZONES,
         SERVICE_UPDATE_PROFILES, SERVICE_RESET_DAILY, SERVICE_SET_SPLIT,
-        SERVICE_SET_ZONE_TARGET, SERVICE_SET_SEASON_MODE,
+        SERVICE_SET_ZONE_TARGET, SERVICE_SET_SEASON_MODE, SERVICE_SET_ZONE_PRECOOL,
     ):
         hass.services.async_remove(DOMAIN, service)
 

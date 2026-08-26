@@ -100,6 +100,53 @@ bascule l'entité `switch.…_pilotage_actif`), puis **↻ Réinitialiser** pour
 toutes les zones en Marche + Normal. Pour revenir en lecture seule : bouton
 **⏸ Observation** dans l'en-tête.
 
+### Pré-refroidissement matinal
+
+Le gating par l'alarme coupe **tout** le bâtiment de ~18h à ~8h. Sur les
+bâtiments mal exposés, certaines pièces passent la nuit 3 °C au-dessus des
+autres et les collègues arrivent le matin dans un bureau déjà chaud : la
+climatisation passe alors la matinée à rattraper l'inertie de la veille.
+
+Le pré-refroidissement est une **exception de gating ciblée** : pendant une
+fenêtre horaire, les zones concernées voient `system_enabled` repasser à `True`
+même bâtiment armé, et régulent normalement (pendule inclus) vers
+`precool_target_temp` — ou leur propre cible si elle est laissée vide. Hors
+fenêtre, le gating reprend et coupe les splits.
+
+Le réglage est **coupé en deux**, chaque moitié là où elle a du sens :
+
+| | Où | Pourquoi là |
+|---|---|---|
+| **Quand** — fenêtre, jours, cible | **Système** (Configurer → System) | Un seul groupe extérieur : démarrer les zones à des heures différentes ne ferait que multiplier les cycles du compresseur |
+| **Qui** — le périmètre | **Par zone** | C'est une propriété de la pièce : ce bureau chauffe, la salle de réunion non |
+
+Trois chemins pilotent la même clé de zone :
+
+- l'interrupteur **`switch.…_pre_refroidissement_matinal`** de la zone (catégorie
+  config, donc hors du dashboard collègues) ;
+- le toggle dans le panneau **« Options »** du widget de zone de la carte ;
+- la case dans le formulaire d'édition de zone du flow d'options.
+
+Réglages système :
+
+| Réglage | Rôle |
+|---|---|
+| `precool_enabled` | Interrupteur maître de la fonctionnalité |
+| `precool_start_hour` / `precool_end_hour` | Fenêtre en heure **locale** (fin exclue) |
+| `precool_target_temp` | Cible imposée ; vide = chaque zone garde la sienne |
+| `precool_weekdays` | 0 = lundi ; pour une fenêtre à cheval sur minuit, c'est le jour d'**ouverture** |
+
+Deux garde-fous :
+
+- **Jamais de pré-chauffage.** Le groupe extérieur étant mono-mode, quand le sens
+  du système est `heat` (hiver) la fonctionnalité se neutralise d'elle-même —
+  sinon on chaufferait les bureaux à 4h du matin.
+- **Reset au front d'ouverture.** Une zone qu'un collègue a coupée la veille
+  (mode OFF, qui tient « jusqu'au reset du matin ») serait restée éteinte
+  pendant toute la fenêtre. L'ouverture de la fenêtre *est* le matin : elle
+  déclenche donc le reset quotidien, **restreint aux zones concernées**. Une
+  coupure faite *pendant* la fenêtre, elle, est respectée.
+
 ## Migration depuis l'automation actuelle
 
 Une fois le composant en production stable, supprimer :

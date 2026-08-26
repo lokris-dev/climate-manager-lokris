@@ -163,3 +163,26 @@ set_season_mode:
             - "auto"
             - "ete"
             - "hiver"
+
+set_zone_precool:
+  name: Pré-refroidissement matinal d'une zone
+  description: >-
+    Active ou désactive le pré-refroidissement matinal POUR UNE ZONE. Quand il
+    est actif, la zone échappe au gating par l'alarme pendant la fenêtre horaire
+    définie au niveau système (Configurer → System) et régule normalement,
+    bâtiment armé. La fenêtre, elle, reste commune à tout le bâtiment.
+  fields:
+    zone_id:
+      name: Zone ID
+      description: ID interne de la zone.
+      required: true
+      example: bureau_baptiste
+      selector:
+        text:
+    enabled:
+      name: Actif
+      description: true = la zone est pré-refroidie pendant la fenêtre.
+      required: true
+      example: true
+      selector:
+        boolean:

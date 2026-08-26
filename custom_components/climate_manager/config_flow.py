@@ -37,12 +37,18 @@ from .const import (
     CONF_FROST_PROTECTION_ENABLED,
     CONF_OVERRIDE_DUREE_MIN,
     CONF_PENDULUM_IDLE,
+    CONF_PRECOOL_ENABLED,
+    CONF_PRECOOL_END_HOUR,
+    CONF_PRECOOL_START_HOUR,
+    CONF_PRECOOL_TARGET_TEMP,
+    CONF_PRECOOL_WEEKDAYS,
     CONF_PRESENCE_ABSENT_STATES,
     CONF_PRESENCE_ENTITY,
     CONF_TEMPERATURE_SENSORS,
     CONF_WINDOW_SENSORS,
     CONF_ZONE_ID,
     CONF_ZONE_NAME,
+    CONF_ZONE_PRECOOL,
     CONF_ZONES,
     DEFAULT_DUREE_COOLDOWN_MIN,
     DEFAULT_DUREE_STABILISATION_MIN,
@@ -52,12 +58,29 @@ from .const import (
     DEFAULT_FROST_PROTECTION_ENABLED,
     DEFAULT_OVERRIDE_DUREE_MIN,
     DEFAULT_PENDULUM_IDLE,
+    DEFAULT_PRECOOL_ENABLED,
+    DEFAULT_PRECOOL_END_HOUR,
+    DEFAULT_PRECOOL_START_HOUR,
+    DEFAULT_PRECOOL_WEEKDAYS,
+    DEFAULT_ZONE_PRECOOL,
     DOMAIN,
     MAX_DUREE_MIN,
     MAX_OVERRIDE_DUREE_MIN,
     MIN_DUREE_MIN,
     MIN_OVERRIDE_DUREE_MIN,
 )
+
+# Jours de la semaine pour le multi-select du pré-refroidissement (0 = lundi,
+# convention datetime.weekday()). Stockés en int côté entry.data.
+_WEEKDAY_OPTIONS = [
+    {"value": "0", "label": "Lundi"},
+    {"value": "1", "label": "Mardi"},
+    {"value": "2", "label": "Mercredi"},
+    {"value": "3", "label": "Jeudi"},
+    {"value": "4", "label": "Vendredi"},
+    {"value": "5", "label": "Samedi"},
+    {"value": "6", "label": "Dimanche"},
+]
 
 # Domains a user might pick as a global presence proxy. Order matters: most
 # common defaults first so the selector picker surfaces them.
@@ -153,6 +176,13 @@ def _zone_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     unit_of_measurement="min",
                 )
             ),
+            # Périmètre du pré-refroidissement matinal : par zone (la fenêtre
+            # horaire, elle, est système). Doublé par une entité switch et par
+            # un toggle dans la carte -> les trois pilotent la même clé.
+            vol.Optional(
+                CONF_ZONE_PRECOOL,
+                default=defaults.get(CONF_ZONE_PRECOOL, DEFAULT_ZONE_PRECOOL),
+            ): selector.BooleanSelector(),
         }
     )
 
@@ -287,13 +317,57 @@ class DelormejClimateOptionsFlow(OptionsFlow):
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=10, max=480, step=10, unit_of_measurement="min")
                 ),
+                vol.Optional(
+                    CONF_PRECOOL_ENABLED,
+                    default=current.get(CONF_PRECOOL_ENABLED, DEFAULT_PRECOOL_ENABLED),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_PRECOOL_START_HOUR,
+                    default=current.get(CONF_PRECOOL_START_HOUR, DEFAULT_PRECOOL_START_HOUR),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=23.5, step=0.5, unit_of_measurement="h")
+                ),
+                vol.Optional(
+                    CONF_PRECOOL_END_HOUR,
+                    default=current.get(CONF_PRECOOL_END_HOUR, DEFAULT_PRECOOL_END_HOUR),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=23.5, step=0.5, unit_of_measurement="h")
+                ),
+                vol.Optional(
+                    CONF_PRECOOL_TARGET_TEMP,
+                    description={
+                        "suggested_value": current.get(CONF_PRECOOL_TARGET_TEMP)
+                    },
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=16.0, max=30.0, step=0.5, unit_of_measurement="°C")
+                ),
+                vol.Optional(
+                    CONF_PRECOOL_WEEKDAYS,
+                    default=current.get(CONF_PRECOOL_WEEKDAYS, DEFAULT_PRECOOL_WEEKDAYS),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=_WEEKDAY_OPTIONS, multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
             })
             return self.async_show_form(step_id="system", data_schema=schema)
 
         # Fusionne dans entry.data (préserve les clés existantes comme présence)
         new_data = {**self._entry.data, **user_input}
+        # Les jours reviennent en chaînes du SelectSelector -> int (0 = lundi).
+        days = new_data.get(CONF_PRECOOL_WEEKDAYS)
+        if days is not None:
+            new_data[CONF_PRECOOL_WEEKDAYS] = sorted(
+                {int(d) for d in days if str(d).lstrip("-").isdigit()}
+            )
+        # Cible vide = chaque zone garde la sienne : on retire la clé plutôt que
+        # de persister un None qui masquerait un futur défaut.
+        if new_data.get(CONF_PRECOOL_TARGET_TEMP) in (None, ""):
+            new_data.pop(CONF_PRECOOL_TARGET_TEMP, None)
         self.hass.config_entries.async_update_entry(self._entry, data=new_data)
         return self.async_create_entry(title="", data=self._entry.options)
+
 
     # --- add zone ---
 
