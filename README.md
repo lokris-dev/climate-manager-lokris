@@ -147,6 +147,34 @@ Deux garde-fous :
   déclenche donc le reset quotidien, **restreint aux zones concernées**. Une
   coupure faite *pendant* la fenêtre, elle, est respectée.
 
+### Maintien (relâchement du pendule)
+
+Cible atteinte, le split reste allumé avec une consigne de **relâchement**,
+**bornée par la cible** (v1.4.23) :
+
+| Sens | Consigne de relâchement |
+|---|---|
+| Froid | `max(sonde du split, cible) + release` |
+| Chaud | `min(sonde du split, cible) − release` |
+
+Jusqu'à la v1.4.22, la consigne était `sonde ± release`. En chauffe, la sonde
+du split (air repris au plafond) monte avec la chauffe elle-même : la consigne
+la suivait et le split ne relâchait jamais. Le 08/10, Bureau RDC est passé de
+21,9 à 26,7 °C en 1h30, alors qu'il était affiché en maintien. Le risque était
+le même en froid avec une sonde qui dérive vers le bas.
+
+**Garde-fou** : si la pièce dépasse malgré tout la cible de 1 °C en maintien,
+la consigne passe en butée (18 °C en chaud, 32 °C en froid). La clim s'arrête
+alors franchement, sans changer de mode.
+
+### Changement de saison
+
+À chaque vraie bascule froid ↔ chaud du groupe (sélecteur Été/Hiver, ou
+bascule automatique), **toutes les cibles de zone repassent à 22 °C** et les
+cibles par split repassent en « hérité ». Sans ce reset, une cible d'été à
+25 °C devenait une cible de chauffe en hiver. Repasser en Auto dans le même sens
+ne touche à rien, le hors-gel non plus.
+
 ## Migration depuis l'automation actuelle
 
 Une fois le composant en production stable, supprimer :

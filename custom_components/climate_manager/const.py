@@ -70,6 +70,11 @@ DEFAULT_SEASON_MODE = SEASON_AUTO
 SEASON_AUTO_COOL_ABOVE = 24.0   # T° moy. ≥ 24 °C → froid
 SEASON_AUTO_HEAT_BELOW = 20.0   # T° moy. ≤ 20 °C → chaud
 
+# Bascule de saison (froid ↔ chaud, manuelle ou auto) : toutes les cibles de zone
+# repartent de cette valeur neutre et les cibles par split repassent en « hérité ».
+# Sans ça, une cible d'été (25 °C) devenait une cible de CHAUFFE en hiver.
+SEASON_CHANGE_NEUTRAL_TARGET = 22.0
+
 # === Pré-refroidissement matinal (système — ConfigEntry.data) ===
 #
 # Problème résolu (analyse du 2026-08-26) : le gating par l'alarme coupe TOUT le
@@ -282,8 +287,11 @@ class Aggressivity:
 
 # Offsets °C par régime, signe appliqué au moment du pilotage selon hvac_mode.
 # "release" : offset pendule — consigne de relâchement quand la cible est atteinte.
-# En cool : consigne = ancre + release (AU-DESSUS de la sonde → split allumé mais idle).
-# En heat : consigne = ancre - release (EN-DESSOUS de la sonde).
+# En cool : consigne = max(sonde, cible) + release (AU-DESSUS → split allumé mais idle).
+# En heat : consigne = min(sonde, cible) - release (EN-DESSOUS).
+# La cible borne la consigne : une sonde qui dérive avec la chauffe (30 °C pour une
+# pièce à 26) ne peut plus entraîner la consigne avec elle (incident du 2026-10-08).
+# Voir zone._release_setpoint.
 POWER_PROFILES: dict[str, dict] = {
     "doux":     {"attaque": 2.0, "stabilisation": 1.0, "release": 2.0},
     "normal":   {"attaque": 5.0, "stabilisation": 1.5, "release": 3.0},
@@ -293,6 +301,12 @@ POWER_PROFILES: dict[str, dict] = {
 # fan_mode par régime. Valeurs Hitachi/Modbus : auto, low, medium, high, top
 # (la version Daikin utilisait quiet/auto/1..5). "attaque" = ventilation pendant
 # RUNNING, "stabilisation" = ventilation douce pendant la phase de maintien.
+# Garde-fou du relâchement : si la pièce DÉPASSE la cible d'au moins cet écart
+# alors qu'on est déjà en relâchement (le split continue de chauffer/refroidir
+# malgré la consigne), on envoie la butée de la clim (CLIM_MIN_SETPOINT en chaud,
+# CLIM_MAX_SETPOINT en froid) → arrêt thermostatique franc, mode conservé.
+PENDULUM_RELEASE_HARD_OVERSHOOT = 1.0
+
 FAN_PROFILES: dict[str, dict] = {
     "doux":   {"attaque": "low",  "stabilisation": "low"},
     "normal": {"attaque": "auto", "stabilisation": "low"},

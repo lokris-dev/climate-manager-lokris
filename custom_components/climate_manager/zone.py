@@ -13,6 +13,7 @@ This separation makes Zone unit-testable without mocking HA.
 from __future__ import annotations
 
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,7 @@ from .const import (
     DEFAULT_TARGET_DEADBAND,
     DEFAULT_ZONE_PRECOOL,
     FAN_PROFILES,
+    PENDULUM_RELEASE_HARD_OVERSHOOT,
     POWER_PROFILES,
     RATE_LIMIT_SECONDS,
     SETPOINT_NOOP_DELTA,
@@ -1099,23 +1101,53 @@ class Zone:
         rounded = round(raw / step) * step
         return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
 
-    def _setpoint_release_offset(
-        self, inp: ZoneInputs, offset: float, target_mode: str
+    def _release_setpoint(
+        self,
+        inp: ZoneInputs,
+        anchor: float | None,
+        target: float | None,
+        offset: float,
+        target_mode: str,
     ) -> float | None:
         """Consigne de relâchement pendule (signe INVERSÉ par rapport à l'attaque).
 
-        En cool : anchor + offset → AU-DESSUS de la sonde → le compresseur
-        ralentit (sa cible est déjà atteinte) mais le split reste allumé.
-        En heat : anchor - offset → EN-DESSOUS de la sonde → même principe.
+        En cool : max(sonde, cible) + offset → AU-DESSUS → le compresseur
+        s'arrête (sa cible est atteinte) mais le split reste allumé.
+        En heat : min(sonde, cible) - offset → EN-DESSOUS → même principe.
+
+        La cible borne la consigne. Ancrée sur la seule sonde (≤ v1.4.22), la
+        consigne suivait la dérive de cette sonde : en chauffe, l'air repris au
+        plafond monte avec la chauffe elle-même (30 °C pour une pièce à 26), la
+        consigne grimpait d'autant et le split ne relâchait jamais (incident du
+        2026-10-08, Bureau RDC 21,9 → 26,7 °C en maintien, consignes 26→27→28).
+        Prendre le min/max avec la cible garde l'ancien comportement quand la
+        sonde est du bon côté, et coupe la boucle quand elle dérive.
+
+        Garde-fou : si la pièce dépasse malgré tout la cible de
+        PENDULUM_RELEASE_HARD_OVERSHOOT, on envoie la butée de la clim (arrêt
+        thermostatique franc, mode conservé pour le groupe).
+
+        `anchor=None` → ancre groupe (sonde la plus froide en cool / la plus
+        chaude en heat). Arrondi vers l'extérieur (floor en heat, ceil en cool)
+        pour ne jamais rogner l'écart de relâchement.
         """
-        anchor = self._anchor_internal_temperature(inp, target_mode)
+        heat = target_mode == HVACMode.HEAT
+        rt = inp.room_temperature
+        if target is not None and rt is not None:
+            overshoot = rt - target if heat else target - rt
+            if overshoot >= PENDULUM_RELEASE_HARD_OVERSHOOT:
+                return CLIM_MIN_SETPOINT if heat else CLIM_MAX_SETPOINT
         if anchor is None:
+            anchor = self._anchor_internal_temperature(inp, target_mode)
+        refs = [t for t in (anchor, target) if t is not None]
+        if not refs:
             return None
-        # Signe inversé : cool = positif, heat = négatif
-        signed = -offset if target_mode == HVACMode.HEAT else offset
-        raw = anchor + signed
         step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
-        rounded = round(raw / step) * step
+        # ±1e-9 : un flottant « entier » (20.000000001) ne doit pas sauter d'un cran.
+        if heat:
+            rounded = math.floor((min(refs) - offset) / step + 1e-9) * step
+        else:
+            rounded = math.ceil((max(refs) + offset) / step - 1e-9) * step
         return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
 
     def _setpoint_for_split_anchor(
@@ -1128,18 +1160,6 @@ class Zone:
         if anchor is None:
             return self._setpoint_for_offset(inp, offset, target_mode)
         signed = offset if target_mode == HVACMode.HEAT else -offset
-        raw = anchor + signed
-        step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
-        rounded = round(raw / step) * step
-        return max(CLIM_MIN_SETPOINT, min(CLIM_MAX_SETPOINT, rounded))
-
-    def _setpoint_release_for_split(
-        self, anchor: float | None, offset: float, target_mode: str, inp: ZoneInputs
-    ) -> float | None:
-        """Consigne de relâchement pendule pour un split avec son ancre propre."""
-        if anchor is None:
-            return self._setpoint_release_offset(inp, offset, target_mode)
-        signed = -offset if target_mode == HVACMode.HEAT else offset
         raw = anchor + signed
         step = inp.clim_setpoint_step or DEFAULT_SETPOINT_STEP
         rounded = round(raw / step) * step
@@ -1246,7 +1266,7 @@ class Zone:
 
             if self._room_reached_target(inp.room_temperature, target, target_mode):
                 offset = spp.get("release", 3.0)
-                sp = self._setpoint_release_for_split(anchor, offset, target_mode, inp)
+                sp = self._release_setpoint(inp, anchor, target, offset, target_mode)
             else:
                 any_attack = True
                 offset = _offset_for_regime(Regime.ATTAQUE, spp)
@@ -1313,7 +1333,8 @@ class Zone:
                 spp = POWER_PROFILES.get(split_power, POWER_PROFILES[DEFAULT_POWER])
                 release_offset = spp.get("release", power_profile.get("release", 3.0))
                 anchor = inp.clim_internal_by_entity.get(entity_id)
-                sp = self._setpoint_release_for_split(anchor, release_offset, target_mode, inp)
+                target = self._split_effective_target(split_cfg, p, target_mode)
+                sp = self._release_setpoint(inp, anchor, target, release_offset, target_mode)
                 if sp is not None:
                     if self._setpoint_should_send(sp, inp):
                         cmds.append(Command(
@@ -1329,7 +1350,8 @@ class Zone:
                     ))
         else:
             release_offset = power_profile.get("release", 3.0)
-            setpoint = self._setpoint_release_offset(inp, release_offset, target_mode)
+            target = self._split_effective_target({}, p, target_mode)
+            setpoint = self._release_setpoint(inp, None, target, release_offset, target_mode)
             if setpoint is not None:
                 if self._setpoint_should_send(setpoint, inp):
                     cmds.append(self._cmd_set_temperature(setpoint))

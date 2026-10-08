@@ -55,6 +55,7 @@ from .const import (
     POWER_PROFILES,
     SEASON_AUTO_COOL_ABOVE,
     SEASON_AUTO_HEAT_BELOW,
+    SEASON_CHANGE_NEUTRAL_TARGET,
     SEASON_SUMMER,
     SEASON_WINTER,
     SETPOINT_NOOP_DELTA,
@@ -120,6 +121,9 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         # effectif du tick courant (saison ou hors-gel), injecté dans les zones.
         self._season_direction: str | None = None      # 'heat' | 'cool' (mémoire auto)
         self._current_system_direction: str | None = None
+        # Bascule de saison détectée par _resolve_season_direction, consommée par
+        # le tick suivant (reset des cibles au neutre avant de piloter).
+        self._season_flip_pending: bool = False
         # Pré-refroidissement matinal : fenêtre ouverte au tick courant, et
         # mémoire du tick précédent pour détecter le FRONT d'ouverture (qui
         # déclenche le reset des zones concernées).
@@ -208,25 +212,57 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
           seuils on garde le dernier sens (mémoire persistée). Défaut froid si
           aucune mémoire ni température.
         """
+        prev = self._season_direction
         mode = self.season_mode()
         if mode == SEASON_SUMMER:
             self._season_direction = "cool"
-            return "cool"
-        if mode == SEASON_WINTER:
+        elif mode == SEASON_WINTER:
             self._season_direction = "heat"
-            return "heat"
-        # auto
-        avg = self._building_avg_temperature()
-        if avg is not None:
-            if avg >= SEASON_AUTO_COOL_ABOVE:
-                self._season_direction = "cool"
-            elif avg <= SEASON_AUTO_HEAT_BELOW:
-                self._season_direction = "heat"
-            elif self._season_direction is None:
-                # Première décision sans mémoire : point milieu de l'hystérésis.
-                mid = (SEASON_AUTO_COOL_ABOVE + SEASON_AUTO_HEAT_BELOW) / 2
-                self._season_direction = "cool" if avg >= mid else "heat"
+        else:  # auto
+            avg = self._building_avg_temperature()
+            if avg is not None:
+                if avg >= SEASON_AUTO_COOL_ABOVE:
+                    self._season_direction = "cool"
+                elif avg <= SEASON_AUTO_HEAT_BELOW:
+                    self._season_direction = "heat"
+                elif self._season_direction is None:
+                    # Première décision sans mémoire : point milieu de l'hystérésis.
+                    mid = (SEASON_AUTO_COOL_ABOVE + SEASON_AUTO_HEAT_BELOW) / 2
+                    self._season_direction = "cool" if avg >= mid else "heat"
+        # Vraie bascule froid ↔ chaud (pas la toute première décision) : le tick
+        # remettra les cibles au neutre avant de piloter (_apply_season_flip).
+        if prev is not None and self._season_direction not in (None, prev):
+            self._season_flip_pending = True
         return self._season_direction or "cool"
+
+    def _reset_targets_for_season(self) -> None:
+        """Bascule de saison : cible de chaque zone = SEASON_CHANGE_NEUTRAL_TARGET,
+        cibles par split repassées en « hérité » (elles suivent donc la zone).
+
+        Une cible d'été (25 °C) devient sinon une cible de CHAUFFE en hiver (et
+        une cible d'hiver une cible de froid en été). Effet immédiat en mémoire,
+        persisté en UNE seule écriture d'options (un seul reload des zones).
+        """
+        neutral = SEASON_CHANGE_NEUTRAL_TARGET
+        for zone in self._zones.values():
+            zone.config.target_temp = neutral
+            for split_cfg in zone.config.splits_config.values():
+                split_cfg["target"] = None
+        zones = []
+        for z in self.entry.options.get(CONF_ZONES, []):
+            new_z = {**z, "target_temp": neutral}
+            if z.get("splits_config"):
+                new_z["splits_config"] = {
+                    ent: {**cfg, "target": None} for ent, cfg in z["splits_config"].items()
+                }
+            zones.append(new_z)
+        self.hass.config_entries.async_update_entry(
+            self.entry, options={**self.entry.options, CONF_ZONES: zones}
+        )
+        _LOGGER.info(
+            "Bascule de saison (%s) → cibles remises à %.1f °C, splits en hérité",
+            self._season_direction, neutral,
+        )
 
     def _compute_system_direction(self) -> str:
         """Sens effectif imposé à toute la flotte ce tick : le hors-gel (quand un
@@ -366,6 +402,12 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
         # Sens global du groupe extérieur pour ce tick (hors-gel > saison).
         # Toutes les zones seront contraintes à ce sens unique (mono-mode).
         self._current_system_direction = self._compute_system_direction()
+        # Bascule de saison → cibles au neutre AVANT de ticker les zones, pour que
+        # ce tick pilote déjà le nouveau sens vers 22 °C et non vers la cible
+        # de la saison précédente.
+        if self._season_flip_pending:
+            self._season_flip_pending = False
+            self._reset_targets_for_season()
         for zone in self._zones.values():
             # Hors-gel : forcer la direction sur les zones qui se retrouveraient
             # en IDLE / SCHEDULE_OFF alors que le cycle doit les maintenir actives.
@@ -1181,8 +1223,15 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                     mag = prof["attaque"]
                     offset = -mag if direction == "cool" else mag
                 elif zone.state.regime == Regime.STABILISATION:
-                    mag = prof["release"]
-                    offset = mag if direction == "cool" else -mag
+                    # Le relâchement est borné par la cible (pas un offset fixe
+                    # sur la sonde) : on affiche l'écart réel consigne - sonde.
+                    sp = zone.state.last_setpoint_sent
+                    probe = inputs.clim_internal_temperature
+                    if sp is not None and probe is not None:
+                        offset = round(sp - probe, 1)
+                    else:
+                        mag = prof["release"]
+                        offset = mag if direction == "cool" else -mag
 
             out["zones"][zid] = {
                 "config": zone.config,
