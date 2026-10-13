@@ -149,23 +149,48 @@ Deux garde-fous :
 
 ### Maintien (relâchement du pendule)
 
-Cible atteinte, le split reste allumé avec une consigne de **relâchement**,
-**bornée par la cible** (v1.4.23) :
+**Froid : inchangé.** Cible atteinte, le split reste allumé avec une consigne
+`max(sonde du split, cible) + release`, bornée par la cible depuis v1.4.23.
+Si la pièce descend de 1 °C sous sa cible, la consigne passe en butée à 32 °C.
+La décision attaque/relâchement reste individuelle pour les cibles par split.
 
-| Sens | Consigne de relâchement |
-|---|---|
-| Froid | `max(sonde du split, cible) + release` |
-| Chaud | `min(sonde du split, cible) − release` |
+**Chaud : extinction réelle de toute la zone (v1.4.24).** Le 13/10, les pièces
+ont continué à monter à 24–25,5 °C malgré les consignes de maintien à 20 puis
+18 °C : sur ce groupe Hitachi mono-mode, une consigne basse ne met pas le split
+en veille tant que le groupe chauffe. Le maintien envoie donc `hvac_mode: off`
+à **tous** les splits de la zone. La reprise en `heat` intervient quand la
+température de pièce redescend **strictement sous la cible de zone**.
 
-Jusqu'à la v1.4.22, la consigne était `sonde ± release`. En chauffe, la sonde
-du split (air repris au plafond) monte avec la chauffe elle-même : la consigne
-la suivait et le split ne relâchait jamais. Le 08/10, Bureau RDC est passé de
-21,9 à 26,7 °C en 1h30, alors qu'il était affiché en maintien. Le risque était
-le même en froid avec une sonde qui dérive vers le bas.
+- Minimum allumé et minimum éteint : **15 minutes chacun**, définis par
+  `HEAT_MIN_ON_SECONDS` / `HEAT_MIN_OFF_SECONDS`. Le chronomètre est persisté
+  et reste valable après reload, redémarrage HA et reset quotidien.
+- À cible atteinte avant la fin du minimum allumé, la chauffe est adoucie
+  jusqu'à la coupure. Un dépassement de **1 °C** force OFF immédiatement ;
+  zone OFF, fenêtre ouverte et gating fermé restent également prioritaires.
+- La **cible de zone gouverne la coupure de tous les splits**, même si un
+  secondaire a une cible individuelle plus haute. Puissance et swing propres
+  restent appliqués pendant la chauffe ; une cible individuelle plus basse
+  adoucit son approche. Les états/consignes réels sont lus par split pour
+  resynchroniser un secondaire resté allumé, éteint ou à une ancienne consigne.
+- L'attaque reste habituelle loin de la cible. Dans les **2 °C** d'approche
+  (`HEAT_APPROACH_BAND`), sa consigne diminue progressivement vers
+  **cible + 1 °C** (`HEAT_APPROACH_HEADROOM`), avec arrondi vers le bas au pas
+  du split. L'approche est appliquée dès le premier tick de démarrage.
+- L'intention OFF est enregistrée avant les commandes. Les anciennes valeurs
+  de consigne et ventilation sont ignorées en OFF par la détection d'override ;
+  une remise en marche manuelle reste une prise en main.
 
-**Garde-fou** : si la pièce dépasse malgré tout la cible de 1 °C en maintien,
-la consigne passe en butée (18 °C en chaud, 32 °C en froid). La clim s'arrête
-alors franchement, sans changer de mode.
+Le cycle logique reste en « Maintien » avec la direction chauffage verrouillée
+pendant l'arrêt, pour reprendre sans attendre le seuil de début de chauffage.
+Si le capteur de pièce devient indisponible pendant l'arrêt, aucune reprise
+n'est demandée. Le boost explicite conserve son fonctionnement prioritaire.
+
+Validation locale ciblée :
+
+```bash
+.venv/bin/python -m pytest tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py tests/test_runtime_persistence.py tests/test_boot_recovery.py tests/test_system_direction.py tests/test_season_flip.py -o addopts=-ra -q -W ignore::DeprecationWarning
+.venv/bin/ruff check custom_components/climate_manager/ tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py
+```
 
 ### Changement de saison
 

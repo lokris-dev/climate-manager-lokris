@@ -763,6 +763,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
 
         internals: list[float] = []
         internals_by_entity: dict[str, float] = {}
+        modes_by_entity: dict[str, str] = {}
+        setpoints_by_entity: dict[str, float] = {}
         setpoints: list[float] = []
         modes: list[str] = []
         fans: set[Any] = set()
@@ -782,6 +784,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                 continue
             attrs = st.attributes
             modes.append(st.state)
+            modes_by_entity[ent] = st.state
             it = _as_float(attrs.get(ATTR_CURRENT_TEMPERATURE))
             if it is not None:
                 internals.append(it)
@@ -789,6 +792,7 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             sp = _as_float(attrs.get(ATTR_TEMPERATURE))
             if sp is not None:
                 setpoints.append(sp)
+                setpoints_by_entity[ent] = sp
             fans.add(attrs.get(ATTR_FAN_MODE))
             swings.add(attrs.get(ATTR_SWING_MODE))
             step = _as_float(attrs.get("target_temp_step"))
@@ -845,6 +849,8 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
             clim_internal_by_entity=internals_by_entity,
             system_direction=self._current_system_direction,
             target_override=target_override,
+            clim_hvac_by_entity=modes_by_entity,
+            clim_setpoint_by_entity=setpoints_by_entity,
         )
 
     def _average_temperature(self, sensors: list[str]) -> float | None:
@@ -1210,6 +1216,13 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                     direction, target_temperature = "cool", active.seuil_fin_refroidissement
                 elif rt is not None and rt < active.seuil_debut_chauffage:
                     direction, target_temperature = "heat", active.seuil_fin_chauffage
+            # En maintien chaud OFF, le thermostat conserve son cycle et sa
+            # cible : le mode réel du split n'indique plus la direction active.
+            if (
+                zone.config.pendulum_idle and zone.state.active_direction == "heat"
+                and zone.state.state == ZoneState.RUNNING
+            ):
+                direction, target_temperature = "heat", active.seuil_fin_chauffage
 
             # Offset du pendule effectivement appliqué (°, signé) : décalage de la
             # consigne par rapport à la sonde. Négatif = plus froid que la sonde,
@@ -1232,6 +1245,14 @@ class DelormejClimateCoordinator(DataUpdateCoordinator):
                     else:
                         mag = prof["release"]
                         offset = mag if direction == "cool" else -mag
+                if direction == "heat" and zone.config.pendulum_idle:
+                    sp = zone.state.last_setpoint_sent
+                    probe = inputs.clim_internal_temperature
+                    offset = (
+                        round(sp - probe, 1)
+                        if zone.state.heat_output_on and sp is not None and probe is not None
+                        else None
+                    )
 
             out["zones"][zid] = {
                 "config": zone.config,
@@ -1414,10 +1435,15 @@ def _is_echo_of_intent(zone: Zone, new_state: Any) -> bool:
     # Mode : si on a une intention de direction, l'état doit correspondre.
     if intent_mode is not None and new_state is not None and new_state.state != intent_mode:
         return False
+    if intent_mode == "off":
+        return True  # consigne et ventilation résiduelles : aucune intention en OFF
     # Consigne : pertinente seulement hors "off", et seulement en mono-split
     # (en multi-splits, last_setpoint_sent ne porte qu'un seul split → on se
     # contente alors du mode + ventilo).
-    if intent_mode != "off" and not zone.config.splits_config and intent_sp is not None:
+    if (
+        intent_mode != "off" and not zone.config.splits_config
+        and len(zone.config.climate_entities) <= 1 and intent_sp is not None
+    ):
         cur_sp = _as_float(attrs.get(ATTR_TEMPERATURE))
         # Tolérance = un cran d'arrondi de l'unité. Certaines clims "plafonnent"
         # une consigne d'attaque sous leur minimum effectif (ex. on commande 18,

@@ -7,15 +7,14 @@ la sonde du split (air repris au plafond) monte avec la chauffe elle-même
 (28-30 °C pour une pièce à 22-26) : la consigne suivait, le split ne relâchait
 jamais. Boucle positive, symétrique en froid quand la sonde dérive vers le bas.
 
-Désormais : heat → min(sonde, cible) - release ; cool → max(sonde, cible) +
-release ; et butée de la clim si la pièce dépasse la cible de 1 °C en maintien.
+v1.4.24 : heat → OFF réel groupé ; cool conserve max(sonde, cible) + release
+et sa butée si la pièce passe 1 °C sous la cible en maintien.
 """
 
 from __future__ import annotations
 
 from custom_components.climate_manager.const import (
     CLIM_MAX_SETPOINT,
-    CLIM_MIN_SETPOINT,
     POWER_PROFILES,
     Regime,
     ZoneState,
@@ -83,19 +82,16 @@ def _sp(cmds):
 # ── Chaud : la sonde dérive vers le haut ─────────────────────────────────────
 
 def test_incident_replay_heat_release_ignores_hot_probe():
-    """Pièce 21,9 (cible 21 atteinte), sonde 28 : avant = 26 (le split chauffe
-    encore), maintenant = cible - release = 19, sous la pièce ET sous la sonde."""
+    """Pièce 21,9 (cible 21 atteinte), sonde 28 : extinction réelle en v1.4.24."""
     zone = _running(_config(), HVAC_HEAT)
-    sp = _sp(zone.tick(_inp()))
-    release = POWER_PROFILES["doux"]["release"]
-    assert sp == 21.0 - release
-    assert sp < 21.9 and sp < 28.0
+    cmds = zone.tick(_inp())
+    assert any(c.data.get("hvac_mode") == "off" for c in cmds)
+    assert _sp(cmds) is None
     assert zone.state.regime == Regime.STABILISATION
 
 
 def test_heat_release_setpoint_does_not_follow_probe_drift():
-    """Sonde 28 → 29 → 30 sur plusieurs ticks : la consigne ne bouge plus
-    (avant : 26 → 27 → 28, la boucle qui faisait monter la pièce)."""
+    """Sonde 28 → 29 → 30 : le split reste OFF, aucune consigne de chauffe."""
     zone = _running(_config(), HVAC_HEAT)
     sent: list[float] = []
     current_sp = None
@@ -105,37 +101,38 @@ def test_heat_release_setpoint_does_not_follow_probe_drift():
             room_temperature=21.6,
             clim_internal_temperature=probe,
             clim_current_setpoint=current_sp,
+            clim_current_hvac_mode=HVAC_HEAT if i == 0 else "off",
         ))
         sp = _sp(cmds)
+        assert zone.state.last_hvac_sent == "off"
         if sp is not None:
             sent.append(sp)
             current_sp = sp
-    assert sent == [19.0], f"une seule consigne attendue, stable : {sent}"
+    assert sent == []
 
 
-def test_heat_release_keeps_probe_anchor_when_probe_is_colder_than_target():
-    """Sonde du bon côté (sous la cible) → ancien comportement conservé."""
+def test_heat_release_cuts_even_when_probe_is_colder_than_target():
+    """La pièce gouverne la coupure, même quand la sonde split est plus froide."""
     zone = _running(_config(power="normal", target_temp=22.0), HVAC_HEAT)
-    sp = _sp(zone.tick(_inp(room_temperature=22.5, clim_internal_temperature=21.0,
-                            clim_setpoint_step=0.5)))
-    assert sp == 21.0 - POWER_PROFILES["normal"]["release"]
+    cmds = zone.tick(_inp(room_temperature=22.5, clim_internal_temperature=21.0,
+                          clim_setpoint_step=0.5))
+    assert any(c.data.get("hvac_mode") == "off" for c in cmds)
+    assert _sp(cmds) is None
 
 
-def test_heat_overshoot_sends_clim_floor():
-    """Maintien mais pièce ≥ cible + 1 °C : le relâchement ne suffit pas → butée."""
+def test_heat_overshoot_sends_off():
+    """Même le dépassement important doit couper, pas envoyer une consigne basse."""
     zone = _running(_config(), HVAC_HEAT)
-    sp = _sp(zone.tick(_inp(room_temperature=22.0, clim_internal_temperature=27.0)))
-    assert sp == CLIM_MIN_SETPOINT
-    # Le mode n'est pas coupé (groupe mono-mode, pendule) : pas de turn_off.
-    cmds = zone.tick(_inp(now_ts=1_000_200.0, room_temperature=22.4))
-    assert not any(c.service == "turn_off" for c in cmds)
+    cmds = zone.tick(_inp(room_temperature=22.0, clim_internal_temperature=27.0))
+    assert any(c.data.get("hvac_mode") == "off" for c in cmds)
+    assert _sp(cmds) is None
 
 
-def test_heat_attack_unchanged_below_target():
-    """Sous la cible → attaque ancrée sur la sonde, comme avant."""
+def test_heat_attack_softens_near_target():
+    """Sous la cible, la consigne diminue dès l'approche."""
     zone = _running(_config(), HVAC_HEAT)
     sp = _sp(zone.tick(_inp(room_temperature=20.5, clim_internal_temperature=24.0)))
-    assert sp == 24.0 + POWER_PROFILES["doux"]["attaque"]
+    assert 21.0 <= sp < 24.0 + POWER_PROFILES["doux"]["attaque"]
     assert zone.state.regime == Regime.ATTAQUE
 
 
@@ -173,28 +170,24 @@ def _multi_cfg(**overrides) -> ZoneConfig:
     )
 
 
-def test_per_split_heat_release_bounded_by_each_split_target():
-    """Chaque split relâche sous SA cible, quelle que soit la chaleur de sa sonde."""
+def test_per_split_heat_release_cuts_all_splits():
+    """Le maintien chaud coupe tous les splits, quelles que soient leurs sondes."""
     zone = _running(_multi_cfg(), HVAC_HEAT)
     cmds = zone.tick(_inp(
         room_temperature=23.4,
         clim_internal_by_entity={"climate.a": 29.0, "climate.b": 30.0},
     ))
-    sps = _setpoints(cmds)
-    # a hérite de la cible zone (21) : 23,4 ≥ 22 → dépassement → butée.
-    assert sps["climate.a"] == CLIM_MIN_SETPOINT
-    # b vise 23 : atteinte sans dépassement → 23 - 2 = 21 (et non 30 - 2 = 28).
-    assert sps["climate.b"] == 21.0
+    assert cmds[0].data == {"entity_id": ["climate.a", "climate.b"], "hvac_mode": "off"}
+    assert _setpoints(cmds) == {}
     assert zone.state.regime == Regime.STABILISATION
 
 
-def test_per_split_heat_one_attacks_other_releases():
+def test_per_split_heat_cannot_keep_heating_past_zone_target():
     zone = _running(_multi_cfg(), HVAC_HEAT)
     cmds = zone.tick(_inp(
         room_temperature=21.5,
         clim_internal_by_entity={"climate.a": 27.0, "climate.b": 27.0},
     ))
-    sps = _setpoints(cmds)
-    assert sps["climate.a"] == 19.0          # cible 21 atteinte → relâche
-    assert sps["climate.b"] > 27.0           # cible 23 pas atteinte → attaque
-    assert zone.state.regime == Regime.ATTAQUE
+    assert cmds[0].data == {"entity_id": ["climate.a", "climate.b"], "hvac_mode": "off"}
+    assert _setpoints(cmds) == {}
+    assert zone.state.regime == Regime.STABILISATION

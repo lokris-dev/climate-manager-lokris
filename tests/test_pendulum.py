@@ -115,7 +115,7 @@ def _find_swings_by_entity(commands) -> dict[str, str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestPendulumNoTurnOff:
-    """En mode pendule, le split ne s'éteint JAMAIS quand le système est actif."""
+    """Le froid reste allumé ; le maintien chaud coupe réellement."""
 
     def test_no_turn_off_when_target_reached_in_cool(self):
         """Cible atteinte en cool → pas de turn_off, split reste actif."""
@@ -132,8 +132,8 @@ class TestPendulumNoTurnOff:
             "Le pendule ne doit JAMAIS couper le split quand le système est actif"
         )
 
-    def test_no_turn_off_when_target_reached_in_heat(self):
-        """Cible atteinte en heat → pas de turn_off."""
+    def test_hvac_off_when_target_reached_in_heat(self):
+        """Cible atteinte en heat → extinction, direction conservée."""
         zone = Zone(_pendulum_config())
         zone.state.state = ZoneState.RUNNING
         zone.state.active_direction = HVAC_HEAT
@@ -143,7 +143,8 @@ class TestPendulumNoTurnOff:
             clim_internal_temperature=21.0,
             clim_current_hvac_mode=HVAC_HEAT,
         ))
-        assert not any(c.service == "turn_off" for c in cmds)
+        assert _find_hvac(cmds) == HVAC_OFF
+        assert zone.state.active_direction == HVAC_HEAT
 
     def test_idle_state_no_turn_off_in_pendulum(self):
         """IDLE en mode pendule → pas de turn_off même si la clim est allumée."""
@@ -188,10 +189,9 @@ class TestPendulumSetpoints:
             f"Release cool : attendu ≈ {internal + release_offset}, obtenu {sp}"
         )
 
-    def test_release_setpoint_below_internal_in_heat(self):
-        """Phase relâchement heat : consigne EN-DESSOUS de la sonde interne."""
+    def test_heat_release_sends_off_without_setpoint(self):
+        """Une consigne basse ne suffit pas sur Hitachi : vraie extinction."""
         internal = 21.0
-        release_offset = POWER_PROFILES["normal"]["release"]  # 3.0
 
         zone = Zone(_pendulum_config(power="normal"))
         zone.state.state = ZoneState.RUNNING
@@ -202,12 +202,8 @@ class TestPendulumSetpoints:
             clim_internal_temperature=internal,
             clim_current_hvac_mode=HVAC_HEAT,
         ))
-        sp = _find_setpoint(cmds)
-        assert sp is not None
-        assert sp < internal, (
-            f"Release heat : consigne {sp} doit être EN-DESSOUS de la sonde {internal}"
-        )
-        assert abs(sp - (internal - release_offset)) < 0.5
+        assert _find_hvac(cmds) == HVAC_OFF
+        assert _find_setpoint(cmds) is None
 
     def test_attack_setpoint_below_internal_in_cool(self):
         """Phase attaque cool : consigne SOUS la sonde (comportement normal)."""

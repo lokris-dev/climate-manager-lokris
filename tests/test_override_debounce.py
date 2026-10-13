@@ -129,6 +129,11 @@ def test_off_intent_echoes_when_unit_off() -> None:
     assert _is_echo_of_intent(z, _st("cool", temperature=21)) is False
 
 
+def test_off_echo_ignores_previous_fan_intent() -> None:
+    z = _zone(last_sp=18.0, last_fan="low", last_hvac="off")
+    assert _is_echo_of_intent(z, _st("off", temperature=30, fan_mode="auto")) is True
+
+
 def test_multi_split_echo_uses_mode_not_setpoint() -> None:
     # Multi-split: last_setpoint_sent only carries one split, so the echo check
     # must rely on mode (shared) + fan, not the setpoint of an arbitrary split.
@@ -137,6 +142,12 @@ def test_multi_split_echo_uses_mode_not_setpoint() -> None:
     assert _is_echo_of_intent(z, _st("cool", temperature=21)) is True
     # Mode flip still breaks the echo.
     assert _is_echo_of_intent(z, _st("heat", temperature=21)) is False
+
+
+def test_multi_split_without_individual_config_echo_uses_mode() -> None:
+    z = _zone(last_sp=23.0, last_hvac="heat")
+    z.config.climate_entities = ["climate.z1", "climate.z2"]
+    assert _is_echo_of_intent(z, _st("heat", temperature=25)) is True
 
 
 # ---------- end-to-end through the coordinator ----------
@@ -161,6 +172,55 @@ def _event(entity_id: str, old, new, context=None) -> SimpleNamespace:
         data={"entity_id": entity_id, "old_state": old, "new_state": new},
         context=context or SimpleNamespace(id="external-ctx"),
     )
+
+
+@pytest.mark.asyncio
+async def test_heat_maintenance_off_and_resume_echoes_on_all_splits():
+    """Extinction/reprise AUTO vues par le listener Modbus avec contexte neuf."""
+    from homeassistant.core import HomeAssistant
+
+    hass = HomeAssistant("/tmp")
+    coord = _make_coordinator(hass)
+    z = _zone(last_sp=30.0, last_fan="auto", last_hvac="heat",
+              splits_config={"climate.z1": {}, "climate.z2": {}})
+    z.config.climate_entities = ["climate.z1", "climate.z2"]
+    z.config.pendulum_idle = True
+    z.config.target_temp = 22.0
+    z.state.state = ZoneState.RUNNING
+    z.state.active_direction = "heat"
+    coord._zones = {"z1": z}
+    inp = ZoneInputs(
+        now_ts=1_000_000, room_temperature=22.0, clim_internal_temperature=29.0,
+        clim_current_hvac_mode="heat", clim_current_setpoint=30.0,
+        clim_current_fan_mode="auto", clim_current_swing_mode=None,
+        schedule_is_on=True, any_window_open=False, house_is_absent=False,
+        system_direction="heat", supports_windnice=False,
+    )
+    cmds = z.tick(inp)
+    assert cmds[0].data["hvac_mode"] == "off"
+    for ent in z.config.climate_entities:
+        coord._on_clim_state_changed(_event(
+            ent, _st("heat", temperature=30, fan_mode="auto"),
+            _st("off", temperature=30, fan_mode="auto"),
+        ))
+        coord._resolve_pending_override(ent, z)
+        assert z.state.state == ZoneState.RUNNING
+
+    from dataclasses import replace
+
+    from custom_components.climate_manager.const import HEAT_MIN_OFF_SECONDS
+
+    cmds = z.tick(replace(inp, now_ts=inp.now_ts + HEAT_MIN_OFF_SECONDS,
+                         room_temperature=21.9, clim_current_hvac_mode="off"))
+    assert cmds[0].data["hvac_mode"] == "heat"
+    for ent in z.config.climate_entities:
+        coord._on_clim_state_changed(_event(
+            ent, _st("off", temperature=30, fan_mode="auto"),
+            _st("heat", temperature=z.state.last_setpoint_sent, fan_mode=z.state.last_fan_sent),
+        ))
+        coord._resolve_pending_override(ent, z)
+        assert z.state.state == ZoneState.RUNNING
+    await hass.async_stop()
 
 
 @pytest.mark.asyncio

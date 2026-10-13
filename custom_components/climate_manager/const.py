@@ -27,8 +27,9 @@ CONF_PRESENCE_ABSENT_STATES = "presence_absent_states"
 # rien piloter ; defaut True partout ailleurs (comportement historique).
 CONF_CONTROL_ENABLED = "control_enabled"
 
-# Mode pendule continu : quand True, le split RESTE allumé après avoir atteint la
-# cible (consigne relâchement au lieu de turn_off). Flag système (ConfigEntry.data).
+# Mode pendule : le cycle reste engagé cible atteinte. En froid, relâchement
+# par consigne ; en chaud Hitachi, OFF réel temporisé (v1.4.24).
+# Flag système (ConfigEntry.data).
 CONF_PENDULUM_IDLE = "pendulum_idle"
 DEFAULT_PENDULUM_IDLE = False
 
@@ -288,7 +289,7 @@ class Aggressivity:
 # Offsets °C par régime, signe appliqué au moment du pilotage selon hvac_mode.
 # "release" : offset pendule — consigne de relâchement quand la cible est atteinte.
 # En cool : consigne = max(sonde, cible) + release (AU-DESSUS → split allumé mais idle).
-# En heat : consigne = min(sonde, cible) - release (EN-DESSOUS).
+# En heat, le maintien utilise désormais OFF réel (_emit_heat_pendulum).
 # La cible borne la consigne : une sonde qui dérive avec la chauffe (30 °C pour une
 # pièce à 26) ne peut plus entraîner la consigne avec elle (incident du 2026-10-08).
 # Voir zone._release_setpoint.
@@ -301,11 +302,18 @@ POWER_PROFILES: dict[str, dict] = {
 # fan_mode par régime. Valeurs Hitachi/Modbus : auto, low, medium, high, top
 # (la version Daikin utilisait quiet/auto/1..5). "attaque" = ventilation pendant
 # RUNNING, "stabilisation" = ventilation douce pendant la phase de maintien.
-# Garde-fou du relâchement : si la pièce DÉPASSE la cible d'au moins cet écart
-# alors qu'on est déjà en relâchement (le split continue de chauffer/refroidir
-# malgré la consigne), on envoie la butée de la clim (CLIM_MIN_SETPOINT en chaud,
-# CLIM_MAX_SETPOINT en froid) → arrêt thermostatique franc, mode conservé.
+# Garde-fou du relâchement : dépassement de cet écart → butée 32 °C en froid,
+# OFF immédiat en chaud même avant la fin du minimum allumé.
 PENDULUM_RELEASE_HARD_OVERSHOOT = 1.0
+
+# Hitachi en chauffe : une consigne basse ne met pas le split en veille tant
+# que le groupe chauffe. Le maintien coupe donc réellement toute la zone.
+# Le dépassement HARD_OVERSHOOT prime sur le minimum allumé ; les coupures
+# explicites (fenêtre, alarme, zone OFF) restent également immédiates.
+HEAT_MIN_ON_SECONDS = 15 * 60
+HEAT_MIN_OFF_SECONDS = 15 * 60
+HEAT_APPROACH_BAND = 2.0
+HEAT_APPROACH_HEADROOM = 1.0
 
 FAN_PROFILES: dict[str, dict] = {
     "doux":   {"attaque": "low",  "stabilisation": "low"},
