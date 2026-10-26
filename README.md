@@ -185,11 +185,30 @@ pendant l'arrêt, pour reprendre sans attendre le seuil de début de chauffage.
 Si le capteur de pièce devient indisponible pendant l'arrêt, aucune reprise
 n'est demandée. Le boost explicite conserve son fonctionnement prioritaire.
 
+**Aucun split ne chauffe sans contrôle (v1.4.25).** Le 26/10, au désarmement de
+7h13, `daily_reset` a remis en IDLE des zones qui chauffaient (bureaux Jonathan
+et Baptiste, Espace Détente, Dev). En pendule, IDLE ne pilote rien et la zone ne
+se réengageait que sous le seuil de début de chauffage : les splits sont restés
+en `heat` sur leur dernière consigne (24–26 °C) pendant 3 h, pièces à 24–25 °C
+pour une cible de 22. Désormais, en pendule et si le sens système autorise le
+chaud (hiver, ou sens non imposé), une zone **sans direction engagée** dont au
+moins un split est en `heat` engage la direction chaud (`_adopt_running_heat`) :
+le maintien chaud ci-dessus s'applique alors (OFF de toute la zone selon la
+cible, minimums de 15 min, coupure immédiate à +1 °C). Cela couvre tous les
+retours en IDLE (reset quotidien ou de pré-refroidissement, fin d'override,
+fenêtre refermée), une direction perdue au reload, et un secondaire resté en
+chauffe quand le consensus de la zone indique `cool`.
+
+Un **capteur de pièce indisponible** pendant la chauffe ne laisse plus le split
+chauffer à l'aveugle : la zone est coupée dès que le minimum allumé de 15 min est
+écoulé, sans reprise tant que la mesure manque. Le froid et les sens interdits par
+le groupe (un split en `heat` en saison froid) ne changent pas.
+
 Validation locale ciblée :
 
 ```bash
-.venv/bin/python -m pytest tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py tests/test_runtime_persistence.py tests/test_boot_recovery.py tests/test_system_direction.py tests/test_season_flip.py -o addopts=-ra -q -W ignore::DeprecationWarning
-.venv/bin/ruff check custom_components/climate_manager/ tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py
+.venv/bin/python -m pytest tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py tests/test_runtime_persistence.py tests/test_boot_recovery.py tests/test_system_direction.py tests/test_season_flip.py tests/test_heat_idle_adoption.py -o addopts=-ra -q -W ignore::DeprecationWarning
+.venv/bin/ruff check custom_components/climate_manager/ tests/test_heat_maintenance.py tests/test_release_drift.py tests/test_pendulum.py tests/test_override_debounce.py tests/test_heat_idle_adoption.py
 ```
 
 ### Changement de saison

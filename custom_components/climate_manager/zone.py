@@ -844,13 +844,14 @@ class Zone:
 
     def _decide(self, inp: ZoneInputs) -> None:
         """Pure decision logic (IDLE -> STARTING) based on room sensor + thresholds."""
+        if self.config.pendulum_idle:
+            # Avant le test du capteur : un split qui chauffe doit être repris
+            # même pièce illisible (le maintien chaud sait alors couper).
+            self._decide_pendulum(inp, self._active(inp))
+            return
         if inp.room_temperature is None:
             return
         p = self._active(inp)
-
-        if self.config.pendulum_idle:
-            self._decide_pendulum(inp, p)
-            return
 
         sd = inp.system_direction  # sens global imposé (groupe mono-mode)
         allow_cool = inp.supports_cool and sd in (None, HVACMode.COOL)
@@ -879,10 +880,11 @@ class Zone:
         attaque / relâchement selon que la cible est atteinte ou non.
         """
         rt = inp.room_temperature
-        if rt is None:
-            return
         ad = self.state.active_direction
         sd = inp.system_direction  # sens global imposé ('cool'|'heat'|None)
+        if rt is None:
+            self._adopt_running_heat(inp)
+            return
 
         if sd in (HVACMode.COOL, HVACMode.HEAT):
             # Groupe extérieur mono-mode : la zone ne peut engager QUE `sd`.
@@ -914,6 +916,8 @@ class Zone:
                 elif inp.supports_heat and rt < p.seuil_debut_chauffage:
                     self.state.active_direction = HVACMode.HEAT
 
+        self._adopt_running_heat(inp)
+
         # Transitions d'état : IDLE → STARTING dès qu'on a une direction
         if self.state.state == ZoneState.IDLE and self.state.active_direction is not None:
             self._transition(ZoneState.STARTING, inp.now_ts)
@@ -925,6 +929,33 @@ class Zone:
             if cur in (HVACMode.COOL, HVACMode.HEAT) and (sd is None or cur == sd):
                 self.state.active_direction = cur
         # En RUNNING : PAS de transition vers STABILIZING (géré dans _maybe_advance)
+
+    @staticmethod
+    def _any_split_heating(inp: ZoneInputs) -> bool:
+        """Au moins un split de la zone est en chauffe (le consensus peut dire cool)."""
+        return (
+            inp.clim_current_hvac_mode == HVACMode.HEAT
+            or HVACMode.HEAT in inp.clim_hvac_by_entity.values()
+        )
+
+    def _adopt_running_heat(self, inp: ZoneInputs) -> None:
+        """Reprendre en main un split qui chauffe sans direction engagée.
+
+        Cas : reset quotidien / fin d'override / fenêtre refermée → IDLE alors que
+        le split chauffe encore, pièce au-dessus du seuil de début ; ou direction
+        perdue (reload) avec un secondaire resté en chauffe. Sans cela, IDLE ne
+        pilote rien et le split garde sa dernière consigne indéfiniment. On engage
+        `heat` : le maintien chaud coupe alors selon la cible et les minimums.
+        Seulement si le sens système autorise le chaud (le froid n'est pas concerné).
+        """
+        if (
+            self.state.active_direction is None
+            and self.state.state in (ZoneState.IDLE, ZoneState.RUNNING)
+            and inp.supports_heat
+            and inp.system_direction in (None, HVACMode.HEAT)
+            and self._any_split_heating(inp)
+        ):
+            self.state.active_direction = HVACMode.HEAT
 
     def _pilot(self, inp: ZoneInputs) -> list[Command]:
         """Translate the current state into commands."""
@@ -1286,7 +1317,12 @@ class Zone:
         target = p.seuil_fin_chauffage
         since = self.state.heat_output_since_ts
         elapsed = inp.now_ts - (since if since is not None else inp.now_ts)
-        if rt is not None:
+        if rt is None:
+            # Pas de chauffe à l'aveugle : la consigne n'est plus suivie, donc on
+            # coupe une fois le minimum allumé écoulé. Jamais de reprise sans mesure.
+            if on and elapsed >= HEAT_MIN_ON_SECONDS:
+                on = False
+        else:
             if on and rt >= target and (
                 elapsed >= HEAT_MIN_ON_SECONDS
                 or rt - target >= PENDULUM_RELEASE_HARD_OVERSHOOT
