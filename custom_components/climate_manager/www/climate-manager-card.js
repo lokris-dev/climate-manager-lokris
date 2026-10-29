@@ -479,7 +479,8 @@ class ClimateManagerCard extends HTMLElement {
         : "";
       status =
         `<span class="cm-state-main" style="color:${C.override}"><span class="cm-dot" style="background:${C.override}"></span>✋ Pris en main</span>` +
-        ` <span class="cm-delta">${esc(until)} ${resume}</span>`;
+        ` <span class="cm-delta">${esc(until)} ${resume}</span>` +
+        this._splitsHtml(z);
     } else {
       const delta = this._deltaTxt(z);
       status =
@@ -487,6 +488,7 @@ class ClimateManagerCard extends HTMLElement {
           `<span class="cm-dot${pulsing ? " pulse" : ""}" style="background:${meta.color}"></span>${esc(meta.label)}` +
         `</span>` +
         (delta ? ` <span class="cm-delta">${delta}</span>` : "") +
+        this._splitsHtml(z) +
         (z.windowsOpen ? ` <span class="cm-delta">· fenêtre ouverte</span>` : "");
     }
 
@@ -700,7 +702,7 @@ class ClimateManagerCard extends HTMLElement {
         ? `offset <b>${off < 0 ? "−" : "+"}${(Math.abs(off) % 1 ? Math.abs(off).toFixed(1) : Math.abs(off).toFixed(0))}°</b>`
         : "";
     const join = (a, b) => (a && b ? `${a} · ${b}` : a || b);
-    if (z.regime === "stabilisation") return join(offTxt, "maintien");
+    if (z.regime === "stabilisation") return offTxt;
     const target = z.targetDisplay ?? z.targetTemp;
     const room = parseFloat(z.roomTemp);
     if (target == null || !Number.isFinite(room)) return offTxt;
@@ -713,8 +715,26 @@ class ClimateManagerCard extends HTMLElement {
     return join(offTxt, `${arrow} ${Math.abs(d).toFixed(1)}° ${verbe}`);
   }
 
+  // Ce que font réellement les splits : « Marche » = pilotage de la zone actif,
+  // pas clim qui souffle (en maintien chauffe, les splits sont éteints).
+  _splitsHtml(z) {
+    const parts = [];
+    const n = z.splits.length;
+    if (n) {
+      const on = z.splits.filter((s) => s.mode && !["off", "unavailable", "unknown"].includes(s.mode)).length;
+      if (n === 1) parts.push(on ? "clim en marche" : "clim à l'arrêt");
+      else if (!on) parts.push("clims à l'arrêt");
+      else parts.push(on === n ? "clims en marche" : `${on}/${n} clims en marche`);
+    }
+    return parts.length ? ` <span class="cm-delta">· ${parts.join(" · ")}</span>` : "";
+  }
+
   _stateMeta(z) {
     if (!z.on) return { label: "Éteint", color: C.off };
+    // Sonde pièce muette : la zone ne peut pas réguler → c'est LE statut.
+    const room = String(z.roomTemp ?? "");
+    if (room === "unavailable" || room === "unknown")
+      return { label: "Sonde T° HS", color: C.window };
     switch (z.state) {
       case "starting":
       case "running": {

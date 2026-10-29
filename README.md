@@ -185,6 +185,12 @@ pendant l'arrêt, pour reprendre sans attendre le seuil de début de chauffage.
 Si le capteur de pièce devient indisponible pendant l'arrêt, aucune reprise
 n'est demandée. Le boost explicite conserve son fonctionnement prioritaire.
 
+**Carte : état réel des clims (v1.4.26).** La ligne d'état indique ce que font
+les splits (« clim à l'arrêt », « 1/2 clims en marche »…) : « Marche » désigne le
+pilotage de la zone, pas une clim qui souffle (en maintien chauffe, les splits
+sont éteints). Une zone dont la sonde pièce est indisponible affiche « Sonde T°
+HS » au lieu de « En attente ».
+
 **Aucun split ne chauffe sans contrôle (v1.4.25).** Le 26/10, au désarmement de
 7h13, `daily_reset` a remis en IDLE des zones qui chauffaient (bureaux Jonathan
 et Baptiste, Espace Détente, Dev). En pendule, IDLE ne pilote rien et la zone ne
